@@ -1,0 +1,115 @@
+import base64
+import json
+import time
+
+import httpx
+import pytest
+
+from conftest import load_fixture
+from shopping.auth.session import AuthRequired, AuthSession
+from shopping.retailer.client import PCExpressClient, RetailerError
+
+
+def fake_jwt(exp_in: int = 3600, sub: str = "customer-1") -> str:
+    def b64(d):
+        return base64.urlsafe_b64encode(json.dumps(d).encode()).decode().rstrip("=")
+
+    return f"{b64({'alg': 'none'})}.{b64({'sub': sub, 'exp': int(time.time()) + exp_in})}.sig"
+
+
+def make_client(tmp_path, handler) -> tuple[PCExpressClient, AuthSession]:
+    auth = AuthSession(tmp_path / "session")
+    client = PCExpressClient(api_base="https://api.test/pcx-bff/api", api_key="k", banner="nofrills", store_id="3728", auth=auth)
+    client.MIN_INTERVAL_SECONDS = 0
+    client._http = httpx.AsyncClient(transport=httpx.MockTransport(handler), headers=client._http.headers)  # noqa: SLF001
+    return client, auth
+
+
+def test_no_generic_request_surface():
+    public = [n for n in dir(PCExpressClient) if not n.startswith("_")]
+    assert sorted(public) == sorted(
+        ["MIN_INTERVAL_SECONDS", "aclose", "get_cart", "get_deals", "get_product", "remove_cart_item", "search_products", "set_cart_quantity"]
+    )
+
+
+@pytest.mark.parametrize("method, path", [
+    ("POST", "/v1/carts/abc/checkout"),
+    ("POST", "/v1/carts/abc/submit"),
+    ("GET", "/v1/customers/abc/payment-cards"),
+    ("POST", "/v1/fulfillment/timeslots"),
+    ("POST", "/v1/carts/abc/merge"),
+    ("DELETE", "/v1/carts/abc"),
+])
+async def test_allowlist_blocks_everything_else(tmp_path, method, path):
+    client, _ = make_client(tmp_path, lambda r: httpx.Response(200, json={}))
+    with pytest.raises(RetailerError, match="non-allowlisted"):
+        await client._call("x", method, path)  # noqa: SLF001
+
+
+async def test_search_parses_and_drops_sponsored(tmp_path):
+    seen = {}
+
+    def handler(request: httpx.Request):
+        seen["body"] = json.loads(request.content)
+        seen["headers"] = request.headers
+        return httpx.Response(200, json=load_fixture("search_peanut_butter.json"))
+
+    client, _ = make_client(tmp_path, handler)
+    res = await client.search_products("peanut butter")
+    assert seen["body"]["searchRelatedInfo"]["term"] == "peanut butter"
+    assert seen["body"]["fulfillmentInfo"]["storeId"] == "3728"
+    assert "authorization" not in seen["headers"]  # search is anonymous
+    assert res["products"] and not any(p.sponsored for p in res["products"])
+    assert len({p.retailer_product_id for p in res["products"]}) == len(res["products"])
+
+
+async def test_cart_requires_auth(tmp_path):
+    client, _ = make_client(tmp_path, lambda r: httpx.Response(200, json={}))
+    with pytest.raises(AuthRequired):
+        await client.get_cart()
+
+
+async def test_set_quantity_sends_entries_with_bearer(tmp_path):
+    calls = []
+
+    def handler(request: httpx.Request):
+        calls.append(request)
+        if request.url.path.endswith("/carts") and request.method == "GET":
+            return httpx.Response(200, json={"carts": [{"id": "cart-1"}]})
+        return httpx.Response(200, json=load_fixture("cart_update.json"))
+
+    client, auth = make_client(tmp_path, handler)
+    auth.set_access_token(fake_jwt())
+    await client.set_cart_quantity("20296401_EA", 2)
+    post = calls[-1]
+    assert post.method == "POST" and post.url.path.endswith("/v1/carts/cart-1")
+    assert json.loads(post.content) == {"entries": {"20296401_EA": {"quantity": 2, "fulfillmentMethod": "pickup", "sellerId": "3728"}}}
+    assert post.headers["authorization"].startswith("Bearer ")
+    assert "/customers/customer-1/carts" in str(calls[0].url)
+
+
+async def test_cart_errors_raise(tmp_path):
+    def handler(request):
+        if request.method == "GET":
+            return httpx.Response(200, json={"carts": [{"id": "c"}]})
+        return httpx.Response(200, json={"cart": {}, "errors": [{"code": "MAX_QTY"}]})
+
+    client, auth = make_client(tmp_path, handler)
+    auth.set_access_token(fake_jwt())
+    with pytest.raises(RetailerError, match="MAX_QTY"):
+        await client.set_cart_quantity("x_EA", 99)
+
+
+def test_auth_session_states(tmp_path):
+    auth = AuthSession(tmp_path / "s")
+    assert auth.status().state == "required"
+    auth.set_access_token("Bearer " + fake_jwt(sub="abc"))
+    st = auth.status()
+    assert st.state == "connected" and st.customer_id == "abc" and st.seconds_remaining > 3000
+    assert oct((tmp_path / "s" / "token.json").stat().st_mode)[-3:] == "600"
+    with pytest.raises(ValueError, match="expired"):
+        auth.set_access_token(fake_jwt(exp_in=-10))
+    with pytest.raises(ValueError):
+        auth.set_access_token("not-a-token")
+    auth.set_access_token(fake_jwt(exp_in=30))  # within the skew window
+    assert auth.status().state == "expired"

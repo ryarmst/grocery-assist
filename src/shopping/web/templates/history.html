@@ -1,0 +1,47 @@
+{% extends "base.html" %}
+{% block title %}Price history{% endblock %}
+{% block content %}
+<h1>Product &amp; price history</h1>
+<form method="get" action="/history" style="margin:10px 0 14px">
+  <input type="text" name="q" value="{{ q }}" placeholder="Filter by name or brand">
+  <button>Filter</button>
+</form>
+
+{% if changes %}
+<h2>Recent price or size changes (90 days)</h2>
+<div class="table-wrap"><table>
+  <thead><tr><th>Product</th><th class="num">From</th><th class="num">To</th><th class="num">Change</th><th>Package</th><th class="num">Unit price</th></tr></thead>
+  <tbody>
+  {% for c in changes %}
+  <tr>
+    <td><a href="/history/{{ c.product_id }}">{{ c.brand or '' }} {{ c.name }}</a></td>
+    <td class="num">{{ c.from_price | money }}</td>
+    <td class="num">{{ c.to_price | money }}</td>
+    <td class="num">{% if c.change_pct is not none %}{{ '%+.1f' % c.change_pct }}%{% endif %}</td>
+    <td class="small">{% if c.size_changed %}<strong>{{ c.from_size }} → {{ c.to_size }}</strong>{% else %}{{ c.to_size or '' }}{% endif %}</td>
+    <td class="num small">{{ unit_price(c.from_unit_price, c.unit_price_basis) }} → {{ unit_price(c.to_unit_price, c.unit_price_basis) }}</td>
+  </tr>
+  {% endfor %}
+  </tbody>
+</table></div>
+{% endif %}
+
+<h2>Recently observed products</h2>
+{% if rows %}
+<div class="table-wrap"><table>
+  <thead><tr><th>Product</th><th>Package</th><th class="num">Observations</th><th>Last seen</th></tr></thead>
+  <tbody>
+  {% for p, n, last in rows %}
+  <tr>
+    <td><a href="/history/{{ p.retailer_product_id }}">{{ p.brand or '' }} {{ p.name }}</a></td>
+    <td class="small">{{ p.raw_size or '' }}</td>
+    <td class="num">{{ n }}</td>
+    <td class="small">{{ last | local }}</td>
+  </tr>
+  {% endfor %}
+  </tbody>
+</table></div>
+{% else %}
+<div class="empty">No prices recorded yet. They accumulate as the agent searches and builds runs.</div>
+{% endif %}
+{% endblock %}

@@ -1,0 +1,743 @@
+"""Shopping domain logic shared by the MCP server and the web UI."""
+
+from __future__ import annotations
+
+import logging
+from collections import defaultdict
+from datetime import datetime, timedelta, timezone
+from decimal import Decimal
+from zoneinfo import ZoneInfo
+
+from sqlalchemy import func, select
+from sqlalchemy.orm import Session
+
+from shopping.models import (
+    PREFERENCE_KINDS,
+    REASON_CODES,
+    RUN_APPLIED,
+    RUN_APPROVED,
+    RUN_BUILDING,
+    RUN_CANCELLED,
+    RUN_PARTIAL,
+    RUN_REVIEW,
+    SEL_APPLIED,
+    SEL_APPROVED,
+    SEL_FAILED,
+    SEL_PENDING,
+    SEL_REJECTED,
+    CartAction,
+    ChoiceGroup,
+    Preference,
+    PriceObservation,
+    Product,
+    Selection,
+    ShoppingRun,
+    utcnow,
+)
+from shopping.retailer.client import PCExpressClient, RetailerError
+from shopping.retailer.normalize import NormalizedProduct, round2
+
+log = logging.getLogger(__name__)
+LOCAL_TZ = ZoneInfo("America/Toronto")
+ACTIVE_RUN_STATES = (RUN_BUILDING, RUN_REVIEW, RUN_PARTIAL, RUN_APPROVED)
+
+
+class ShoppingError(Exception):
+    pass
+
+
+def _local_day(dt: datetime) -> str:
+    return dt.astimezone(LOCAL_TZ).date().isoformat()
+
+
+# =====================================================================================
+# Products and price observations
+# =====================================================================================
+
+def upsert_product(session: Session, np: NormalizedProduct) -> Product:
+    product = session.scalar(select(Product).where(Product.retailer_product_id == np.retailer_product_id))
+    if product is None:
+        product = Product(retailer_product_id=np.retailer_product_id, name=np.name)
+        session.add(product)
+    for attr in ("article_number", "uom", "brand", "name", "raw_size", "raw_package_sizing", "size_value", "size_unit",
+                 "size_estimated", "comparison_family", "sold_by", "image_url", "link"):
+        value = getattr(np, attr)
+        if value is not None and value != "":
+            setattr(product, attr, value)
+    if np.gtin:
+        product.gtin = np.gtin
+    product.last_seen_at = utcnow()
+    session.flush()
+    return product
+
+
+def record_observation(session: Session, np: NormalizedProduct, *, source: str, store_id: str | None,
+                       run_id: str | None = None, dedupe: bool = True) -> PriceObservation:
+    """Store a price observation. Bulk sources (search/deals) are de-duplicated to one row per
+    product/store/day unless the price, size or deal changed."""
+    product = upsert_product(session, np)
+    if dedupe:
+        last = session.scalar(
+            select(PriceObservation)
+            .where(PriceObservation.product_id == product.id, PriceObservation.store_id == store_id)
+            .order_by(PriceObservation.observed_at.desc())
+            .limit(1)
+        )
+        if (
+            last is not None
+            and _local_day(last.observed_at) == _local_day(utcnow())
+            and last.effective_price == np.effective_price
+            and last.normalized_quantity == np.size_value
+            and last.deal_text == np.deal_text
+        ):
+            return last
+    obs = PriceObservation(
+        product_id=product.id,
+        shopping_run_id=run_id,
+        store_id=store_id,
+        source=source,
+        regular_price=np.regular_price,
+        sale_price=np.sale_price,
+        effective_price=np.effective_price,
+        member_price=np.member_price,
+        raw_package_size=np.raw_size,
+        raw_package_sizing=np.raw_package_sizing,
+        normalized_quantity=np.size_value,
+        normalized_unit=np.size_unit,
+        size_estimated=np.size_estimated,
+        unit_price=np.unit_price,
+        unit_price_basis=np.unit_price_basis,
+        retailer_unit_price=np.retailer_unit_price,
+        deal_type=np.deal_type,
+        deal_text=np.deal_text,
+        deal_expiry=np.deal_expiry,
+        pc_optimum_text=np.pc_optimum_text,
+        promotion_text=np.promotion_text,
+        availability=np.availability,
+    )
+    session.add(obs)
+    session.flush()
+    return obs
+
+
+def price_stats(session: Session, product: Product, *, store_id: str | None = None) -> dict:
+    """Current vs. historical prices. One value per day is used for averages so repeated
+    searches on the same day don't skew them."""
+    q = select(PriceObservation).where(PriceObservation.product_id == product.id)
+    if store_id:
+        q = q.where(PriceObservation.store_id == store_id)
+    observations = list(session.scalars(q.order_by(PriceObservation.observed_at)))
+    if not observations:
+        return {"observations": 0}
+    daily: dict[str, PriceObservation] = {}
+    for obs in observations:
+        daily[_local_day(obs.observed_at)] = obs  # last observation of each day
+    days = sorted(daily)
+    current = daily[days[-1]]
+    previous = next((daily[d] for d in reversed(days[:-1]) if daily[d].effective_price != current.effective_price), None)
+    now = utcnow()
+
+    def window(n_days: int) -> list[PriceObservation]:
+        return [o for o in daily.values() if o.observed_at >= now - timedelta(days=n_days) and o.effective_price is not None]
+
+    def avg(obs_list: list[PriceObservation], attr: str) -> Decimal | None:
+        values = [getattr(o, attr) for o in obs_list if getattr(o, attr) is not None]
+        return sum(values) / len(values) if values else None
+
+    prices = [o.effective_price for o in daily.values() if o.effective_price is not None]
+    unit_prices = [o.unit_price for o in daily.values() if o.unit_price is not None]
+    sizes = {o.normalized_quantity for o in observations if o.normalized_quantity is not None and not o.size_estimated}
+    avg90 = avg(window(90), "effective_price")
+    stats = {
+        "observations": len(observations),
+        "days_observed": len(days),
+        "first_observed": days[0],
+        "current_price": round2(current.effective_price),
+        "current_unit_price": None if current.unit_price is None else round(float(current.unit_price), 4),
+        "unit_price_basis": current.unit_price_basis,
+        "previous_price": round2(previous.effective_price) if previous else None,
+        "previous_price_date": _local_day(previous.observed_at) if previous else None,
+        "avg_30d": round2(avg(window(30), "effective_price")),
+        "avg_90d": round2(avg90),
+        "min_price": round2(min(prices)) if prices else None,
+        "max_price": round2(max(prices)) if prices else None,
+        "min_unit_price": round(float(min(unit_prices)), 4) if unit_prices else None,
+        "max_unit_price": round(float(max(unit_prices)), 4) if unit_prices else None,
+        "package_size_changed": len(sizes) > 1,
+    }
+    if avg90 and current.effective_price is not None and len(days) >= 2:
+        stats["vs_avg_90d_pct"] = round(float((current.effective_price - avg90) / avg90 * 100), 1)
+        stats["is_lowest_observed"] = current.effective_price <= min(prices)
+    return stats
+
+
+def history_brief(session: Session, retailer_ids: list[str], store_id: str | None) -> dict[str, dict]:
+    """Small per-product history summary for annotating search results (one query)."""
+    if not retailer_ids:
+        return {}
+    rows = session.execute(
+        select(
+            Product.retailer_product_id,
+            func.count(func.distinct(func.date(PriceObservation.observed_at))),
+            func.min(PriceObservation.observed_at),
+        )
+        .join(PriceObservation, PriceObservation.product_id == Product.id)
+        .where(Product.retailer_product_id.in_(retailer_ids), PriceObservation.store_id == store_id)
+        .group_by(Product.retailer_product_id)
+    ).all()
+    out: dict[str, dict] = {}
+    for rid, n_days, first in rows:
+        if n_days < 2:
+            continue  # nothing to compare against yet
+        product = session.scalar(select(Product).where(Product.retailer_product_id == rid))
+        s = price_stats(session, product, store_id=store_id)
+        out[rid] = {k: s.get(k) for k in ("days_observed", "min_price", "avg_90d", "vs_avg_90d_pct", "is_lowest_observed", "previous_price", "package_size_changed")}
+    return out
+
+
+# =====================================================================================
+# Preferences
+# =====================================================================================
+
+def active_preferences(session: Session) -> list[Preference]:
+    return list(session.scalars(select(Preference).where(Preference.active.is_(True)).order_by(Preference.created_at)))
+
+
+def preference_dict(p: Preference) -> dict:
+    return {
+        "id": p.id, "kind": p.kind, "description": PREFERENCE_KINDS.get(p.kind, p.kind), "scope": p.scope,
+        "target": p.target, "target_label": p.target_label, "category": p.category, "weight": p.weight,
+        "note": p.note, "created_at": p.created_at.isoformat(), "absolute": p.kind.startswith("blacklist"),
+    }
+
+
+def add_preference(session: Session, *, kind: str, scope: str | None = None, target: str | None = None,
+                   target_label: str | None = None, note: str | None = None, category: str | None = None,
+                   weight: float = 1.0, source_selection_id: str | None = None) -> Preference:
+    if kind not in PREFERENCE_KINDS:
+        raise ShoppingError(f"Unknown preference kind {kind!r}")
+    # Avoid duplicates of the same active rule.
+    existing = session.scalar(
+        select(Preference).where(Preference.active.is_(True), Preference.kind == kind, Preference.scope.is_(scope) if scope is None else Preference.scope == scope,
+                                 Preference.target.is_(target) if target is None else Preference.target == target)
+    )
+    if existing and kind != "preference_note":
+        return existing
+    pref = Preference(kind=kind, scope=scope, target=target, target_label=target_label, note=note, category=category,
+                      weight=weight, source_selection_id=source_selection_id)
+    session.add(pref)
+    session.flush()
+    return pref
+
+
+def preference_flags(prefs: list[Preference], np_or_product) -> list[str]:
+    """Which active preferences mention this product (by id or brand)."""
+    rid = getattr(np_or_product, "retailer_product_id", None)
+    brand = (getattr(np_or_product, "brand", None) or "").lower()
+    flags = []
+    for p in prefs:
+        if p.kind in ("prefer_product", "blacklist_product", "prefer_for_type") and p.target == rid:
+            flags.append(p.kind + (f" ({p.scope})" if p.scope else ""))
+        elif p.kind in ("prefer_brand", "blacklist_brand") and brand and (p.target or "").lower() == brand:
+            flags.append(p.kind + (f" ({p.scope})" if p.scope else ""))
+    return flags
+
+
+def blacklist_hit(prefs: list[Preference], np: NormalizedProduct) -> Preference | None:
+    brand = (np.brand or "").lower()
+    for p in prefs:
+        if p.kind == "blacklist_product" and p.target == np.retailer_product_id:
+            return p
+        if p.kind == "blacklist_brand" and brand and (p.target or "").lower() == brand:
+            return p
+    return None
+
+
+# =====================================================================================
+# Shopping runs
+# =====================================================================================
+
+def get_run(session: Session, run_id: str) -> ShoppingRun:
+    run = session.get(ShoppingRun, run_id)
+    if run is None:
+        raise ShoppingError(f"No shopping run {run_id!r}")
+    return run
+
+
+def create_run(session: Session, *, summary: str, store_id: str, notes: str | None = None) -> ShoppingRun:
+    run = ShoppingRun(summary=summary or "Shopping run", store_id=store_id, notes=notes, status=RUN_BUILDING)
+    session.add(run)
+    session.flush()
+    return run
+
+
+def _require_editable(run: ShoppingRun) -> None:
+    if run.status in (RUN_APPLIED, RUN_CANCELLED):
+        raise ShoppingError(f"Run {run.id} is {run.status}; create a new run instead.")
+
+
+def _clean_reasons(reasons: list[str] | None) -> list[str]:
+    reasons = [r.strip().lower() for r in (reasons or []) if r and r.strip()]
+    unknown = [r for r in reasons if r not in REASON_CODES]
+    if unknown:
+        raise ShoppingError(f"Unknown reason codes {unknown}; allowed: {sorted(REASON_CODES)}")
+    return list(dict.fromkeys(reasons))
+
+
+async def _stage_selection(session: Session, client: PCExpressClient, run: ShoppingRun, *, product_id: str, quantity: float,
+                           reasons: list[str] | None, rationale: str | None, requirement: str | None,
+                           group: ChoiceGroup | None, position: int) -> Selection:
+    if quantity <= 0:
+        raise ShoppingError("Quantity must be positive.")
+    reasons = _clean_reasons(reasons)
+    np = await client.get_product(product_id)
+    if not np.retailer_product_id:
+        raise ShoppingError(f"Product {product_id!r} not found.")
+    hit = blacklist_hit(active_preferences(session), np)
+    if hit and "user_requested" not in reasons:
+        raise ShoppingError(
+            f"{np.brand or ''} {np.name} is blacklisted by preference #{hit.id} ({hit.kind}). "
+            "Choose another product (or include reason 'user_requested' if the user explicitly asked for it)."
+        )
+    if np.max_quantity and quantity > np.max_quantity:
+        raise ShoppingError(f"Quantity {quantity} exceeds the retailer maximum of {np.max_quantity}.")
+    obs = record_observation(session, np, source="selection", store_id=run.store_id, run_id=run.id, dedupe=False)
+    sel = Selection(
+        product_id=obs.product_id, price_observation_id=obs.id, quantity=quantity, status=SEL_PENDING,
+        requirement=requirement or (group.label if group else None), rationale=rationale, reason_codes=reasons, position=position,
+    )
+    run.selections.append(sel)  # attach via relationships so in-session collections stay current
+    if group is not None:
+        group.selections.append(sel)
+    session.flush()
+    return sel
+
+
+def _next_position(run: ShoppingRun) -> int:
+    positions = [s.position for s in run.selections] + [g.position for g in run.choice_groups]
+    return (max(positions) + 1) if positions else 0
+
+
+async def add_selection(session: Session, client: PCExpressClient, run_id: str, *, product_id: str, quantity: float = 1,
+                        reasons: list[str] | None = None, rationale: str | None = None, requirement: str | None = None) -> Selection:
+    run = get_run(session, run_id)
+    _require_editable(run)
+    sel = await _stage_selection(session, client, run, product_id=product_id, quantity=quantity, reasons=reasons,
+                                 rationale=rationale, requirement=requirement, group=None, position=_next_position(run))
+    _after_agent_change(run)
+    return sel
+
+
+async def add_choice_group(session: Session, client: PCExpressClient, run_id: str, *, label: str, options: list[dict],
+                           recommended_index: int = 0) -> ChoiceGroup:
+    run = get_run(session, run_id)
+    _require_editable(run)
+    if len(options) < 1:
+        raise ShoppingError("A choice group needs at least one option.")
+    if not 0 <= recommended_index < len(options):
+        raise ShoppingError("recommended_index is out of range.")
+    group = ChoiceGroup(label=label, position=_next_position(run))
+    run.choice_groups.append(group)
+    session.flush()
+    for i, opt in enumerate(options):
+        reasons = list(opt.get("reasons") or [])
+        if i != recommended_index and "alternative" not in reasons:
+            reasons.append("alternative")
+        sel = await _stage_selection(session, client, run, product_id=opt["product_id"], quantity=float(opt.get("quantity", 1)),
+                                     reasons=reasons, rationale=opt.get("rationale"), requirement=label, group=group, position=i)
+        if i == recommended_index:
+            group.recommended_selection_id = sel.id
+            group.selected_selection_id = sel.id
+    session.flush()
+    _after_agent_change(run)
+    return group
+
+
+def update_selection(session: Session, selection_id: str, *, quantity: float | None = None, rationale: str | None = None,
+                     reasons: list[str] | None = None, withdraw: bool = False) -> Selection:
+    """Agent-side edits. Only pending selections can be changed; the agent cannot approve."""
+    sel = session.get(Selection, selection_id)
+    if sel is None:
+        raise ShoppingError(f"No selection {selection_id!r}")
+    _require_editable(sel.run)
+    if sel.status != SEL_PENDING:
+        raise ShoppingError(f"Selection {selection_id} is already {sel.status}; only pending selections can be edited.")
+    if quantity is not None:
+        if quantity <= 0:
+            raise ShoppingError("Quantity must be positive (use withdraw=true to remove a suggestion).")
+        sel.quantity = quantity
+    if rationale is not None:
+        sel.rationale = rationale
+    if reasons is not None:
+        sel.reason_codes = _clean_reasons(reasons)
+    if withdraw:
+        sel.status = SEL_REJECTED
+        sel.rejected_at = utcnow()
+        sel.last_error = "withdrawn by agent"
+    session.flush()
+    recompute_run_status(sel.run)
+    return sel
+
+
+def submit_run_for_review(session: Session, run_id: str) -> ShoppingRun:
+    run = get_run(session, run_id)
+    _require_editable(run)
+    if not run.selections:
+        raise ShoppingError("Add at least one selection before submitting for review.")
+    if run.status == RUN_BUILDING:
+        run.status = RUN_REVIEW
+    recompute_run_status(run)
+    return run
+
+
+def _after_agent_change(run: ShoppingRun) -> None:
+    # New selections on an already-reviewed run put it back into review.
+    if run.status in (RUN_APPROVED, RUN_PARTIAL):
+        run.status = RUN_REVIEW
+
+
+def chosen_selections(run: ShoppingRun) -> list[Selection]:
+    """Standalone selections plus the currently selected option of each choice group."""
+    out = []
+    for sel in run.selections:
+        if sel.choice_group_id is None:
+            out.append(sel)
+        elif sel.choice_group and sel.choice_group.selected_selection_id == sel.id:
+            out.append(sel)
+    return sorted(out, key=lambda s: (s.choice_group.position if s.choice_group else s.position))
+
+
+def recompute_run_status(run: ShoppingRun) -> None:
+    if run.status in (RUN_BUILDING, RUN_CANCELLED):
+        return
+    chosen = chosen_selections(run)
+    statuses = {s.status for s in chosen}
+    if not chosen or SEL_PENDING in statuses:
+        run.status = RUN_REVIEW
+    elif statuses <= {SEL_APPLIED, SEL_REJECTED} and SEL_APPLIED in statuses:
+        run.status = RUN_APPLIED
+    elif statuses <= {SEL_APPROVED, SEL_APPLIED}:
+        run.status = RUN_APPROVED
+    else:
+        run.status = RUN_PARTIAL
+
+
+def estimated_total(run: ShoppingRun) -> Decimal:
+    total = Decimal(0)
+    for sel in chosen_selections(run):
+        if sel.status == SEL_REJECTED or sel.observation is None or sel.observation.effective_price is None:
+            continue
+        total += sel.observation.effective_price * Decimal(str(sel.quantity))
+    return total
+
+
+# -- user decisions (web UI) -----------------------------------------------------------
+
+def _decide(sel: Selection, approve: bool) -> None:
+    if sel.status not in (SEL_PENDING, SEL_APPROVED, SEL_REJECTED, SEL_FAILED):
+        return  # applied selections are final
+    now = utcnow()
+    if approve:
+        sel.status, sel.approved_at, sel.rejected_at = SEL_APPROVED, now, None
+    else:
+        sel.status, sel.rejected_at, sel.approved_at = SEL_REJECTED, now, None
+
+
+def decide_selection(session: Session, selection_id: str, approve: bool) -> Selection:
+    sel = session.get(Selection, selection_id)
+    if sel is None:
+        raise ShoppingError(f"No selection {selection_id!r}")
+    _require_editable(sel.run)
+    if sel.run.status == RUN_BUILDING:
+        sel.run.status = RUN_REVIEW  # the user is reviewing, whether or not the agent submitted
+    group = sel.choice_group
+    if group is not None and approve:
+        # Approving an option selects it; sibling options are not being bought.
+        group.selected_selection_id = sel.id
+        for sib in group.selections:
+            if sib.id != sel.id and sib.status in (SEL_PENDING, SEL_APPROVED):
+                _decide(sib, approve=False)
+    elif group is not None and not approve:
+        # Rejecting the chosen option rejects the requirement (all pending siblings).
+        for sib in group.selections:
+            if sib.status in (SEL_PENDING, SEL_APPROVED):
+                _decide(sib, approve=False)
+    _decide(sel, approve)
+    session.flush()
+    recompute_run_status(sel.run)
+    return sel
+
+
+def user_set_selection_quantity(session: Session, selection_id: str, quantity: float) -> Selection:
+    sel = session.get(Selection, selection_id)
+    if sel is None:
+        raise ShoppingError(f"No selection {selection_id!r}")
+    _require_editable(sel.run)
+    if sel.status == SEL_APPLIED:
+        raise ShoppingError("Already in the cart; change the quantity on the Cart page.")
+    if quantity <= 0:
+        raise ShoppingError("Quantity must be positive; reject the item instead.")
+    sel.quantity = quantity
+    session.flush()
+    return sel
+
+
+def choose_alternative(session: Session, group_id: str, selection_id: str) -> ChoiceGroup:
+    group = session.get(ChoiceGroup, group_id)
+    if group is None or selection_id not in {s.id for s in group.selections}:
+        raise ShoppingError("That option does not belong to this group.")
+    _require_editable(group.run)
+    previous = session.get(Selection, group.selected_selection_id) if group.selected_selection_id else None
+    group.selected_selection_id = selection_id
+    # If the previous choice was already approved, carry the approval over to the new choice.
+    if previous and previous.id != selection_id and previous.status == SEL_APPROVED:
+        decide_selection(session, selection_id, approve=True)
+    else:
+        sel = session.get(Selection, selection_id)
+        if sel.status == SEL_REJECTED:
+            sel.status, sel.rejected_at = SEL_PENDING, None
+    session.flush()
+    recompute_run_status(group.run)
+    return group
+
+
+def approve_all_current(session: Session, run_id: str, snapshot_ids: list[str]) -> int:
+    """Approve the chosen selections that were on screen when the user clicked. Selections the
+    agent added after the page was rendered are not in the snapshot and stay pending."""
+    run = get_run(session, run_id)
+    _require_editable(run)
+    snapshot = set(snapshot_ids)
+    count = 0
+    for sel in chosen_selections(run):
+        if sel.id in snapshot and sel.status == SEL_PENDING:
+            decide_selection(session, sel.id, approve=True)
+            count += 1
+    return count
+
+
+def reject_remaining(session: Session, run_id: str, snapshot_ids: list[str]) -> int:
+    run = get_run(session, run_id)
+    _require_editable(run)
+    snapshot = set(snapshot_ids)
+    count = 0
+    for sel in chosen_selections(run):
+        if sel.id in snapshot and sel.status == SEL_PENDING:
+            decide_selection(session, sel.id, approve=False)
+            count += 1
+    return count
+
+
+def cancel_run(session: Session, run_id: str) -> ShoppingRun:
+    run = get_run(session, run_id)
+    if run.status == RUN_APPLIED:
+        raise ShoppingError("Run already applied to the cart.")
+    run.status = RUN_CANCELLED
+    return run
+
+
+# -- cart application -----------------------------------------------------------------
+
+async def apply_approved(session: Session, client: PCExpressClient, run_id: str) -> dict:
+    """Push approved, not-yet-applied selections into the retailer cart.
+
+    Idempotent per product: the cart quantity is raised to at least the total approved quantity
+    for that product in this run, never lowered and never double-added on retry."""
+    run = get_run(session, run_id)
+    _require_editable(run)
+    to_apply = [s for s in chosen_selections(run) if s.status in (SEL_APPROVED, SEL_FAILED) and s.approved_at]
+    if not to_apply:
+        return {"applied": 0, "failed": 0, "results": [], "message": "Nothing approved to apply."}
+    cart = await client.get_cart()
+    by_product: dict[str, list[Selection]] = defaultdict(list)
+    for sel in to_apply:
+        by_product[sel.product.retailer_product_id].append(sel)
+    results = []
+    for rid, sels in by_product.items():
+        before = cart.quantity_of(rid)
+        wanted = sum(s.quantity for s in sels)
+        target = max(before, wanted)
+        action = CartAction(shopping_run_id=run.id, selection_id=sels[0].id, product_id=sels[0].product_id, retailer_product_id=rid,
+                            action="set_quantity", quantity_before=before, quantity_after=target,
+                            price_at_action=sels[0].observation.effective_price if sels[0].observation else None,
+                            upstream_reference=cart.cart_id)
+        try:
+            if target != before:
+                cart = await client.set_cart_quantity(rid, target)
+            action.success = True
+            for s in sels:
+                s.status, s.applied_to_cart_at, s.last_error = SEL_APPLIED, utcnow(), None
+            results.append({"product_id": rid, "name": sels[0].product.name, "quantity_before": before, "quantity_after": target, "ok": True})
+        except (RetailerError, Exception) as exc:  # noqa: BLE001 - record and continue with the rest
+            action.success, action.error = False, str(exc)[:500]
+            for s in sels:
+                s.status, s.last_error = SEL_FAILED, str(exc)[:500]
+            results.append({"product_id": rid, "name": sels[0].product.name, "ok": False, "error": str(exc)[:200]})
+            log.warning("cart apply failed run=%s product=%s: %s", run.id, rid, exc)
+            if "session" in str(exc).lower() or "AccessToken" in str(exc):
+                session.add(action)
+                break  # auth problem: stop rather than failing every item
+        session.add(action)
+        session.flush()
+    recompute_run_status(run)
+    ok = sum(1 for r in results if r["ok"])
+    return {"applied": ok, "failed": len(results) - ok, "results": results}
+
+
+async def user_set_cart_quantity(session: Session, client: PCExpressClient, product_id: str, quantity: float) -> None:
+    """Manual cart edit from the /cart page (user action), recorded in cart history."""
+    cart = await client.get_cart()
+    before = cart.quantity_of(product_id)
+    action = CartAction(retailer_product_id=product_id, action="remove" if quantity == 0 else "set_quantity",
+                        quantity_before=before, quantity_after=quantity, upstream_reference=cart.cart_id)
+    product = session.scalar(select(Product).where(Product.retailer_product_id == product_id))
+    action.product_id = product.id if product else None
+    try:
+        await client.set_cart_quantity(product_id, quantity)
+        action.success = True
+    except Exception as exc:  # noqa: BLE001
+        action.error = str(exc)[:500]
+        raise
+    finally:
+        session.add(action)
+        session.flush()
+
+
+# =====================================================================================
+# Serialization helpers (MCP + templates)
+# =====================================================================================
+
+def selection_dict(session: Session, sel: Selection, *, with_history: bool = False) -> dict:
+    obs = sel.observation
+    product = sel.product
+    d = {
+        "selection_id": sel.id,
+        "choice_group_id": sel.choice_group_id,
+        "product_id": product.retailer_product_id,
+        "name": product.name,
+        "brand": product.brand,
+        "package_size": product.raw_size,
+        "quantity": sel.quantity,
+        "status": sel.status,
+        "requirement": sel.requirement,
+        "reasons": sel.reason_codes,
+        "rationale": sel.rationale,
+        "observed_price": round2(obs.effective_price) if obs else None,
+        "regular_price": round2(obs.regular_price) if obs else None,
+        "unit_price": round(float(obs.unit_price), 4) if obs and obs.unit_price is not None else None,
+        "unit_price_basis": obs.unit_price_basis if obs else None,
+        "deal": obs.deal_text if obs else None,
+        "last_error": sel.last_error,
+    }
+    if with_history:
+        d["history"] = price_stats(session, product, store_id=obs.store_id if obs else None)
+    return d
+
+
+def run_dict(session: Session, run: ShoppingRun, *, with_history: bool = False) -> dict:
+    groups = []
+    for g in run.choice_groups:
+        groups.append({
+            "choice_group_id": g.id, "label": g.label, "recommended_selection_id": g.recommended_selection_id,
+            "selected_selection_id": g.selected_selection_id,
+            "options": [selection_dict(session, s, with_history=with_history) for s in g.selections],
+        })
+    standalone = [selection_dict(session, s, with_history=with_history) for s in run.selections if s.choice_group_id is None]
+    counts: dict[str, int] = defaultdict(int)
+    for s in chosen_selections(run):
+        counts[s.status] += 1
+    return {
+        "run_id": run.id, "summary": run.summary, "status": run.status, "store_id": run.store_id,
+        "created_at": run.created_at.isoformat(), "notes": run.notes,
+        "estimated_total": round2(estimated_total(run)),
+        "status_counts": dict(counts),
+        "selections": standalone,
+        "choice_groups": groups,
+    }
+
+
+def product_history(session: Session, retailer_product_id: str, *, limit: int = 50) -> dict:
+    product = session.scalar(select(Product).where(Product.retailer_product_id == retailer_product_id))
+    if product is None:
+        raise ShoppingError(f"No history for product {retailer_product_id!r} yet.")
+    observations = list(session.scalars(
+        select(PriceObservation).where(PriceObservation.product_id == product.id).order_by(PriceObservation.observed_at.desc()).limit(limit)
+    ))
+    return {
+        "product": {
+            "product_id": product.retailer_product_id, "name": product.name, "brand": product.brand, "package_size": product.raw_size,
+            "gtin": product.gtin, "comparison_family": product.comparison_family, "sold_by": product.sold_by,
+            "first_seen": product.first_seen_at.isoformat(), "last_seen": product.last_seen_at.isoformat(),
+        },
+        "stats": price_stats(session, product),
+        "observations": [
+            {
+                "observed_at": o.observed_at.isoformat(), "store_id": o.store_id, "source": o.source, "run_id": o.shopping_run_id,
+                "package_size": o.raw_package_size, "price": round2(o.effective_price), "regular_price": round2(o.regular_price),
+                "unit_price": None if o.unit_price is None else round(float(o.unit_price), 4), "unit_price_basis": o.unit_price_basis,
+                "deal": o.deal_text, "pc_optimum": o.pc_optimum_text,
+            }
+            for o in observations
+        ],
+        "selections": selection_history(session, product_id=retailer_product_id)["selections"],
+    }
+
+
+def selection_history(session: Session, *, product_id: str | None = None, query: str | None = None, limit: int = 50) -> dict:
+    q = select(Selection).join(Product, Selection.product_id == Product.id).order_by(Selection.created_at.desc())
+    if product_id:
+        q = q.where(Product.retailer_product_id == product_id)
+    if query:
+        like = f"%{query.lower()}%"
+        q = q.where(func.lower(Product.name).like(like) | func.lower(Product.brand).like(like) | func.lower(Selection.requirement).like(like))
+    rows = list(session.scalars(q.limit(limit)))
+    outcome_counts: dict[str, int] = defaultdict(int)
+    for s in rows:
+        outcome_counts[s.status] += 1
+    quantities = [s.quantity for s in rows if s.status in (SEL_APPROVED, SEL_APPLIED)]
+    return {
+        "count": len(rows),
+        "outcomes": dict(outcome_counts),
+        "typical_quantity": (sorted(quantities)[len(quantities) // 2] if quantities else None),
+        "last_suggested": rows[0].created_at.isoformat() if rows else None,
+        "selections": [
+            {
+                "date": s.created_at.isoformat(), "run_id": s.shopping_run_id, "product_id": s.product.retailer_product_id,
+                "name": s.product.name, "brand": s.product.brand, "requirement": s.requirement, "quantity": s.quantity,
+                "status": s.status, "reasons": s.reason_codes,
+                "price": round2(s.observation.effective_price) if s.observation else None,
+            }
+            for s in rows
+        ],
+    }
+
+
+def recent_price_changes(session: Session, *, days: int = 30, limit: int = 50, store_id: str | None = None) -> list[dict]:
+    """Products whose effective price or package size changed within the window."""
+    since = utcnow() - timedelta(days=days)
+    q = select(PriceObservation).where(PriceObservation.observed_at >= since)
+    if store_id:
+        q = q.where(PriceObservation.store_id == store_id)
+    by_product: dict[int, list[PriceObservation]] = defaultdict(list)
+    for o in session.scalars(q.order_by(PriceObservation.observed_at)):
+        by_product[o.product_id].append(o)
+    out = []
+    for pid, obs in by_product.items():
+        first, last = obs[0], obs[-1]
+        price_changed = first.effective_price != last.effective_price
+        size_changed = first.normalized_quantity != last.normalized_quantity and not last.size_estimated
+        if not (price_changed or size_changed):
+            continue
+        product = session.get(Product, pid)
+        change = None
+        if first.effective_price and last.effective_price is not None:
+            change = round(float((last.effective_price - first.effective_price) / first.effective_price * 100), 1)
+        out.append({
+            "product_id": product.retailer_product_id, "name": product.name, "brand": product.brand,
+            "from_price": round2(first.effective_price), "to_price": round2(last.effective_price), "change_pct": change,
+            "from_size": first.raw_package_size, "to_size": last.raw_package_size, "size_changed": size_changed,
+            "from_unit_price": None if first.unit_price is None else round(float(first.unit_price), 4),
+            "to_unit_price": None if last.unit_price is None else round(float(last.unit_price), 4),
+            "unit_price_basis": last.unit_price_basis, "since": _local_day(first.observed_at), "latest": _local_day(last.observed_at),
+        })
+    out.sort(key=lambda r: abs(r["change_pct"] or 0), reverse=True)
+    return out[:limit]

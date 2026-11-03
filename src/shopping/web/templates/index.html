@@ -1,0 +1,24 @@
+{% extends "base.html" %}
+{% block content %}
+<h1>Shopping runs</h1>
+<p class="muted small">Runs are created by the shopping agent. Open one to review, approve and send items to the cart. Store {{ store_id }}.</p>
+{% if rows %}
+<div class="table-wrap"><table>
+  <thead><tr><th>Created</th><th>Run</th><th>Status</th><th class="num">Items</th><th class="num">Pending</th><th class="num">Est. total</th></tr></thead>
+  <tbody>
+  {% for r in rows %}
+    <tr>
+      <td class="small">{{ r.run.created_at | local }}</td>
+      <td><a href="/runs/{{ r.run.id }}">{{ r.run.summary }}</a></td>
+      <td><span class="status {{ r.run.status }}">{{ r.run.status.replace('_', ' ') }}</span></td>
+      <td class="num">{{ r.items }}</td>
+      <td class="num">{{ r.pending or '' }}</td>
+      <td class="num">{{ r.total | money }}</td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table></div>
+{% else %}
+<div class="empty">No shopping runs yet. Ask the agent to go grocery shopping.</div>
+{% endif %}
+{% endblock %}

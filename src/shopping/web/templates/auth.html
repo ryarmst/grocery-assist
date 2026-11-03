@@ -1,0 +1,27 @@
+{% extends "base.html" %}
+{% block title %}Retailer connection{% endblock %}
+{% block content %}
+<h1>Retailer connection</h1>
+<div class="grid2" style="margin:12px 0">
+  <div class="stat"><div class="k">Status</div><div class="v">{{ auth.label }}</div></div>
+  <div class="stat"><div class="k">Expires</div><div class="v">{% if auth.expires_at %}{{ auth.expires_at | local }}{% else %}—{% endif %}</div></div>
+  <div class="stat"><div class="k">Time left</div><div class="v">{% if auth.state == 'connected' %}{{ auth.seconds_remaining // 60 }} min{% else %}—{% endif %}</div></div>
+  <div class="stat"><div class="k">Last updated</div><div class="v small">{% if auth.last_updated %}{{ auth.last_updated | local }}{% else %}—{% endif %}</div></div>
+</div>
+<p class="muted small">Searching and deals work without a connection. Reading or changing the cart needs a logged-in session.
+  No Frills blocks automated logins, so you paste the session token from your own browser. It lasts about an hour.</p>
+
+<h2>Paste a session token</h2>
+<ol class="steps small">
+  <li>Log in at <a href="https://www.nofrills.ca" target="_blank" rel="noopener">nofrills.ca</a> (reload the page if it's been open a while — that refreshes the token).</li>
+  <li>Open DevTools → <strong>Application</strong> (Firefox: <strong>Storage</strong>) → <strong>Cookies</strong> → <code>https://www.nofrills.ca</code>.</li>
+  <li>Copy the value of the <code>AccessToken</code> cookie (starts with <code>eyJ</code>) and paste it below.</li>
+</ol>
+<form method="post" action="/auth">
+  <textarea name="token" placeholder="eyJ…" autocomplete="off" spellcheck="false" required></textarea>
+  <p><button class="primary">Save session</button></p>
+</form>
+{% if auth.state != 'required' %}
+<form method="post" action="/auth/clear"><button class="danger">Disconnect</button></form>
+{% endif %}
+{% endblock %}

@@ -1,0 +1,39 @@
+{% extends "base.html" %}
+{% block title %}Cart{% endblock %}
+{% block content %}
+<h1>Retailer cart</h1>
+{% if error %}
+  <div class="flash err">{{ error }}</div>
+  <p><a class="btn" href="/auth">Connect session</a></p>
+{% elif cart %}
+  <p class="muted small">{{ cart.store_name or '' }} (store {{ cart.store_id }}). Checkout happens on nofrills.ca — this app can't place orders.
+    {% if cart.store_id and cart.store_id != store_id %}<br><strong>Note:</strong> the cart's pickup store differs from this app's store ({{ store_id }}); prices may differ.{% endif %}</p>
+  {% if cart.lines %}
+  <div class="table-wrap"><table>
+    <thead><tr><th>Product</th><th class="num">Qty</th><th class="num">Unit</th><th class="num">Line total</th><th></th></tr></thead>
+    <tbody>
+    {% for l in cart.lines %}
+    <tr>
+      <td>{{ l.brand or '' }} <a href="/history/{{ l.product_id }}">{{ l.name }}</a> <span class="muted small">{{ l.product_id }}</span></td>
+      <td class="num">
+        <form method="post" action="/cart/{{ l.product_id }}" class="inline">
+          <input type="number" name="quantity" value="{{ l.quantity | qty }}" min="0" step="any"><button class="link">Set</button>
+        </form>
+      </td>
+      <td class="num">{{ l.unit_price | money }}</td>
+      <td class="num">{{ l.line_total | money }}{% if l.regular_line_total and l.line_total and l.regular_line_total > l.line_total %}<br><span class="muted small" style="text-decoration:line-through">{{ l.regular_line_total | money }}</span>{% endif %}</td>
+      <td>
+        <form method="post" action="/cart/{{ l.product_id }}" class="inline">
+          <input type="hidden" name="quantity" value="0"><button class="link danger">Remove</button>
+        </form>
+      </td>
+    </tr>
+    {% endfor %}
+    </tbody>
+  </table></div>
+  <p style="text-align:right"><span class="muted">Subtotal</span> {{ cart.subtotal | money }} · <span class="muted">Savings</span> {{ cart.total_discounts | money }} · <strong>Estimated {{ cart.estimated_total | money }}</strong></p>
+  {% else %}
+  <div class="empty">The cart is empty.</div>
+  {% endif %}
+{% endif %}
+{% endblock %}

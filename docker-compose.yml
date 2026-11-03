@@ -1,0 +1,16 @@
+services:
+  shopping:
+    build: .
+    image: shopping-assistant:latest
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      DATA_DIR: /data
+      HOST: 0.0.0.0
+      PORT: "8000"
+    ports:
+      # Bound to localhost only. Change to "8000:8000" (and set MCP_TOKEN + ALLOWED_HOSTS)
+      # to reach it from other machines on your network.
+      - "127.0.0.1:8000:8000"
+    volumes:
+      - ./data:/data

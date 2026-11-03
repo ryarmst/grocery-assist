@@ -1,0 +1,52 @@
+{% extends "base.html" %}
+{% block title %}Preferences{% endblock %}
+{% block content %}
+<h1>Shopping preferences</h1>
+<p class="muted small">The agent reads these before shopping. “Don't suggest” rules are absolute; everything else is guidance.
+Most preferences are created from the review page.</p>
+
+<h2>Add a preference</h2>
+<form method="post" action="/preferences" class="form-grid">
+  <label>Kind
+    <select name="kind">
+      {% for k, label in PREFERENCE_KINDS.items() %}<option value="{{ k }}">{{ label }}</option>{% endfor %}
+    </select>
+  </label>
+  <label>Applies to (item type) <input type="text" name="scope" placeholder="e.g. coffee"></label>
+  <label>Target (product id or brand) <input type="text" name="target" placeholder="e.g. Kraft"></label>
+  <label>Note <input type="text" name="note" placeholder="e.g. whole bean unless a big sale"></label>
+  <button class="primary">Save</button>
+</form>
+
+<h2>{{ 'All' if show_inactive else 'Active' }} preferences
+  <a class="small" href="/preferences{{ '' if show_inactive else '?show_inactive=true' }}">{{ 'hide inactive' if show_inactive else 'show inactive' }}</a></h2>
+{% if prefs %}
+<div class="table-wrap"><table>
+  <thead><tr><th>Rule</th><th>Target</th><th>Applies to / note</th><th>Created</th><th></th></tr></thead>
+  <tbody>
+  {% for p in prefs %}
+  <tr class="{{ '' if p.active else 'muted' }}">
+    <td>{{ PREFERENCE_KINDS.get(p.kind, p.kind) }}{% if not p.active %} <span class="status">inactive</span>{% endif %}</td>
+    <td>{% if p.target and '_' in p.target %}<a href="/history/{{ p.target }}">{{ p.target_label or p.target }}</a>{% else %}{{ p.target_label or p.target or '' }}{% endif %}</td>
+    <td>
+      <form method="post" action="/preferences/{{ p.id }}/edit" class="inline">
+        <input type="text" name="scope" value="{{ p.scope or '' }}" placeholder="item type" style="width:120px">
+        <input type="text" name="note" value="{{ p.note or '' }}" placeholder="note" style="width:220px">
+        <input type="hidden" name="weight" value="{{ p.weight }}">
+        <button class="link">Save</button>
+      </form>
+    </td>
+    <td class="small">{{ p.created_at | local }}</td>
+    <td>
+      <form method="post" action="/preferences/{{ p.id }}/toggle" class="inline">
+        <button class="link">{{ 'Deactivate' if p.active else 'Reactivate' }}</button>
+      </form>
+    </td>
+  </tr>
+  {% endfor %}
+  </tbody>
+</table></div>
+{% else %}
+<div class="empty">No preferences yet.</div>
+{% endif %}
+{% endblock %}

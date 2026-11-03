@@ -1,0 +1,63 @@
+{% extends "base.html" %}
+{% block title %}{{ d.product.name }} · History{% endblock %}
+{% block content %}
+{% set s = d.stats %}
+<p class="small"><a href="/history">← History</a></p>
+<div class="product" style="grid-template-columns:80px 1fr">
+  {% if product.image_url %}<img src="{{ product.image_url }}" alt="" style="width:80px;height:80px">{% else %}<div></div>{% endif %}
+  <div>
+    <div class="brand">{{ d.product.brand or '' }}</div>
+    <h1>{{ d.product.name }}</h1>
+    <div class="muted small">{{ d.product.package_size or 'Sold by weight' }} · {{ d.product.product_id }}{% if d.product.gtin %} · UPC {{ d.product.gtin }}{% endif %}
+      {% if product.link %} · <a href="https://www.nofrills.ca{{ product.link }}" target="_blank" rel="noopener">View on No Frills</a>{% endif %}</div>
+  </div>
+</div>
+
+<h2>Summary</h2>
+<div class="grid2">
+  <div class="stat"><div class="k">Current price</div><div class="v">{{ s.current_price | money }}</div></div>
+  <div class="stat"><div class="k">Current unit price</div><div class="v">{{ unit_price(s.current_unit_price, s.unit_price_basis) or '—' }}</div></div>
+  <div class="stat"><div class="k">Previous price</div><div class="v">{{ s.previous_price | money }}</div></div>
+  <div class="stat"><div class="k">Lowest / highest</div><div class="v">{{ s.min_price | money }} / {{ s.max_price | money }}</div></div>
+  <div class="stat"><div class="k">30 / 90-day avg</div><div class="v">{{ s.avg_30d | money }} / {{ s.avg_90d | money }}</div></div>
+  <div class="stat"><div class="k">Days observed</div><div class="v">{{ s.days_observed or 0 }}</div></div>
+</div>
+{% if s.package_size_changed %}<p class="flash err">The package size has changed over time — compare unit prices, not shelf prices.</p>{% endif %}
+
+<h2>Observed prices</h2>
+<div class="table-wrap"><table>
+  <thead><tr><th>Date</th><th>Source</th><th>Package</th><th class="num">Price</th><th class="num">Regular</th><th class="num">Unit price</th><th>Deal</th></tr></thead>
+  <tbody>
+  {% for o in d.observations %}
+  <tr>
+    <td class="small">{{ o.observed_at[:16].replace('T', ' ') }} UTC</td>
+    <td class="small">{{ o.source }}{% if o.run_id %} · <a href="/runs/{{ o.run_id }}">run</a>{% endif %}</td>
+    <td class="small">{{ o.package_size or '' }}</td>
+    <td class="num">{{ o.price | money }}</td>
+    <td class="num muted">{{ o.regular_price | money }}</td>
+    <td class="num small">{{ unit_price(o.unit_price, o.unit_price_basis) }}</td>
+    <td class="small">{{ o.deal or '' }}{% if o.pc_optimum %} {{ o.pc_optimum }}{% endif %}</td>
+  </tr>
+  {% endfor %}
+  </tbody>
+</table></div>
+
+<h2>Suggestions</h2>
+{% if d.selections %}
+<div class="table-wrap"><table>
+  <thead><tr><th>Date</th><th>Run</th><th>For</th><th class="num">Qty</th><th class="num">Price</th><th>Outcome</th></tr></thead>
+  <tbody>
+  {% for sel in d.selections %}
+  <tr>
+    <td class="small">{{ sel.date[:10] }}</td>
+    <td><a href="/runs/{{ sel.run_id }}">{{ sel.run_id }}</a></td>
+    <td class="small">{{ sel.requirement or '' }}</td>
+    <td class="num">{{ sel.quantity | qty }}</td>
+    <td class="num">{{ sel.price | money }}</td>
+    <td><span class="status {{ sel.status }}">{{ sel.status }}</span></td>
+  </tr>
+  {% endfor %}
+  </tbody>
+</table></div>
+{% else %}<p class="muted">Never suggested yet.</p>{% endif %}
+{% endblock %}
