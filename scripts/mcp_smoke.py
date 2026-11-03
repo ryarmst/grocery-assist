@@ -78,6 +78,11 @@ async def main(url: str) -> None:
         print(f"    {hist['stats'].get('observations')} observations of {hist['product']['name']}")
         show("get_selection_history", await c.call_tool("shopping_get_selection_history", {"query": "peanut"}))
         show("get_recent_price_history", await c.call_tool("shopping_get_recent_price_history", {"days": 30}))
+        fb = show("get_feedback", await c.call_tool("shopping_get_feedback", {"days": 30}))
+        print(f"    {fb['summary']['total']} feedback records, {len(fb['summary']['patterns'])} patterns")
+        req = show("get_requirement_history", await c.call_tool("shopping_get_requirement_history", {"requirements": ["Peanut butter", "Milk"]}))
+        for r in req["requirements"]:
+            print(f"    {r['requirement']}: {r['status']} ({r['why']})")
         auth = show("auth_status", await c.call_tool("shopping_auth_status", {}))
         print(f"    retailer session: {auth['label']}")
 

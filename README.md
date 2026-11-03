@@ -83,24 +83,54 @@ Check everything end to end (creates a small test run, doesn't touch the cart):
 | `shopping_submit_run_for_review` | Hand the run to you; returns the review URL |
 | `shopping_get_preferences` / `shopping_add_preference_note` | Preferences |
 | `shopping_get_product_history` / `shopping_get_selection_history` / `shopping_get_recent_price_history` | History |
+| `shopping_get_feedback` | What you removed/swapped during review and why, plus detected patterns |
+| `shopping_get_requirement_history` | Per item: last bought, typical interval, recently skipped, due / not due (for regular purchases) |
 | `shopping_apply_approved` | Add **user-approved** items to the cart |
 | `shopping_auth_status` | Whether the retailer session is connected (no secrets) |
 
 ## Review workflow
 
-The agent creates a run and stages items → you open the review URL → choose alternatives,
-adjust quantities, approve or reject (or **Approve all current**, which only covers items
-that were on screen when you loaded the page) → **Apply approved to cart**. Applying raises
-each product's cart quantity to the approved amount; it never lowers it or double-adds on
-retry. Every cart change is logged in `cart_actions`.
+The agent creates a run and stages items → you open the review URL. Items are grouped into
+*From the grocery list*, *Regular purchases* and *Deals & extras*. Either work down the page or press
+**Triage** to go through pending items one at a time.
 
-Quick preference buttons on each item: prefer product / brand / "this for <item>",
-don't suggest product / brand. "Don't suggest" rules are enforced; others guide the agent.
+For each item: pick an option (for choice groups) and **Approve**, or **Remove**. Open **Why?** to add
+reason chips (“have enough”, “wrong size”, “better unit price”…) and a note in your own words, and
+optionally turn the decision into a rule (prefer this product/brand, use this for “milk”, don't suggest
+this product/brand). **Approve all current** only covers items that were on screen when you loaded the
+page. **Apply approved to cart** raises each product's cart quantity to the approved amount; it never
+lowers it or double-adds on retry. Every cart change is logged in `cart_actions`.
+
+### Feedback
+
+`/feedback` collects every remove/swap with its reasons. It counts reasons, flags repeated patterns
+(e.g. the same product removed twice as disliked → suggest a blacklist; the same alternative picked
+twice → suggest "use this for <item>"; an item removed repeatedly as "have enough" → suggested too
+often) with a one-click **Create this rule**, and lets you mark records reviewed with a note on what you
+did (rule, skill change, app change). The agent reads the same data via `shopping_get_feedback`, and
+search results carry per-product `user_feedback`.
+
+### Regular purchases
+
+Notion stays the source of truth for *what* is a regular purchase (`Regular Purchase?` in Kitchen
+Pantry and Storage). The skill passes those names to `shopping_get_requirement_history`, which uses the
+app's own history (last added to cart, typical interval, last “have enough” skip, preferred product) to
+say which are due. This replaces a Notion automation that copies regular items onto the grocery list.
+Use the exact Notion item name as the selection's `requirement` so history lines up.
 
 ## Configuration
 
 See `.env.example`. Key settings: `PCX_API_KEY`, `STORE_ID` (default 3728),
-`PUBLIC_URL`, `ALLOWED_HOSTS`, `MCP_TOKEN`, `LOG_LEVEL`.
+`HOST` (one or more comma-separated addresses), `PUBLIC_URL`, `ALLOWED_HOSTS`, `MCP_TOKEN`, `LOG_LEVEL`.
+
+Example — reachable from the VM itself and from the host over a host-only adapter, but not on other
+interfaces:
+
+```
+HOST=127.0.0.1,192.168.208.128
+ALLOWED_HOSTS=localhost,127.0.0.1,192.168.208.128
+PUBLIC_URL=http://192.168.208.128:8000
+```
 
 **Network exposure:** by default everything binds to localhost. The web UI has no login of
 its own, so if you expose it beyond localhost put it behind something that authenticates

@@ -652,7 +652,16 @@ def run_dict(session: Session, run: ShoppingRun, *, with_history: bool = False) 
         "status_counts": dict(counts),
         "selections": standalone,
         "choice_groups": groups,
+        "user_feedback": _run_feedback(session, run.id),
     }
+
+
+def _run_feedback(session: Session, run_id: str) -> list[dict]:
+    from shopping.core.feedback import feedback_dict  # local import: feedback builds on this module
+    from shopping.models import Feedback
+
+    rows = session.scalars(select(Feedback).where(Feedback.shopping_run_id == run_id).order_by(Feedback.created_at))
+    return [feedback_dict(f) for f in rows]
 
 
 def product_history(session: Session, retailer_product_id: str, *, limit: int = 50) -> dict:

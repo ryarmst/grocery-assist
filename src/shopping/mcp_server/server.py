@@ -18,6 +18,7 @@ from sqlalchemy import select
 
 from shopping import context
 from shopping.config import settings
+from shopping.core import feedback as fbk
 from shopping.core import service
 from shopping.database import session_scope
 from shopping.models import REASON_CODES, ShoppingRun
@@ -30,7 +31,10 @@ Grocery shopping assistant for No Frills (store {settings.store_id}). Workflow:
 2. shopping_create_run, then stage items with shopping_add_selection (one product) or
    shopping_add_choice_group (several candidate products for one requirement, with a recommendation).
    Always give reason codes and a short rationale. Reason codes: {", ".join(REASON_CODES)}.
-3. shopping_submit_run_for_review and give the user the review URL. The user approves items in the web UI.
+   Use the exact item name from the user's list/pantry as `requirement` so history lines up across runs.
+   For regular purchases, check shopping_get_requirement_history first and only stage items that are due.
+3. shopping_submit_run_for_review and give the user the review URL. The user triages items in the web UI,
+   often recording why they removed or swapped something; read shopping_get_feedback to learn from it.
 4. Only after the user approves, shopping_apply_approved may push approved items into the cart.
 This service cannot check out or place orders; the user completes purchases themselves.
 Blacklist preferences are absolute; other preferences are guidance.
@@ -66,7 +70,9 @@ def _annotate(session, products, source: str) -> list[dict]:
     prefs = service.active_preferences(session)
     for p in products:
         service.record_observation(session, p, source=source, store_id=settings.store_id)
-    history = service.history_brief(session, [p.retailer_product_id for p in products], settings.store_id)
+    ids = [p.retailer_product_id for p in products]
+    history = service.history_brief(session, ids, settings.store_id)
+    past_feedback = fbk.feedback_by_product(session, ids)
     out = []
     for p in products:
         d = p.summary()
@@ -75,6 +81,8 @@ def _annotate(session, products, source: str) -> list[dict]:
             d["preferences"] = flags
         if p.retailer_product_id in history:
             d["history"] = history[p.retailer_product_id]
+        if p.retailer_product_id in past_feedback:
+            d["user_feedback"] = past_feedback[p.retailer_product_id]
         out.append({k: v for k, v in d.items() if v is not None})
     return out
 
@@ -326,6 +334,44 @@ async def shopping_get_recent_price_history(days: Annotated[int, Field(ge=1, le=
     """Products whose price or package size changed recently (largest changes first)."""
     with session_scope() as session:
         return {"days": days, "changes": service.recent_price_changes(session, days=days, limit=limit, store_id=settings.store_id)}
+
+
+# -------------------------------------------------------------------------------------
+# Feedback and regular purchases
+# -------------------------------------------------------------------------------------
+
+@mcp.tool()
+@logged
+async def shopping_get_feedback(
+    days: Annotated[int, Field(ge=1, le=730)] = 90,
+    requirement: Annotated[str | None, Field(description="Only feedback about this item, e.g. 'milk'")] = None,
+    product_id: str | None = None,
+    action: Annotated[str | None, Field(description="removed | chose_alternative | approved | quantity_changed | note")] = None,
+    unreviewed_only: bool = False,
+    limit: Annotated[int, Field(ge=1, le=500)] = 100,
+) -> dict:
+    """What the user removed or swapped during review and why (reason tags + their own words), plus
+    summary counts and detected patterns. Use it to avoid repeating suggestions the user rejected."""
+    with session_scope() as session:
+        rows = fbk.list_feedback(session, days=days, action=action, requirement=requirement,
+                                 product_retailer_id=product_id, unreviewed_only=unreviewed_only, limit=limit)
+        summary = fbk.feedback_summary(session, days=days)
+        summary.pop("by_tag_code", None)
+        return {"summary": summary, "records": [fbk.feedback_dict(r) for r in rows]}
+
+
+@mcp.tool()
+@logged
+async def shopping_get_requirement_history(
+    requirements: Annotated[list[str], Field(min_length=1, max_length=100,
+                                             description="Item names, e.g. the pantry items flagged Regular Purchase")],
+    default_cadence_days: Annotated[int, Field(ge=1, le=60, description="Assumed interval when there's no history")] = 7,
+) -> dict:
+    """For each item: when it was last added to the cart (product, quantity, price), the typical interval
+    between purchases, whether the user recently removed it because they had enough, the preferred product
+    for it, and a due / not_due / unknown verdict. Use this to decide which regular purchases to stage."""
+    with session_scope() as session:
+        return {"requirements": fbk.requirement_history(session, requirements, default_cadence_days=default_cadence_days)}
 
 
 def tool_names() -> list[str]:

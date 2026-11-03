@@ -15,9 +15,19 @@ from starlette.middleware.base import BaseHTTPMiddleware
 from shopping import context
 from shopping.auth.session import AuthRequired
 from shopping.config import settings
+from shopping.core import feedback as fbk
 from shopping.core import service
 from shopping.database import session_scope
-from shopping.models import PREFERENCE_KINDS, REASON_CODES, PriceObservation, Product, Selection, ShoppingRun
+from shopping.models import (
+    FEEDBACK_TAG_LABELS,
+    FEEDBACK_TAGS,
+    PREFERENCE_KINDS,
+    Feedback,
+    REASON_CODES,
+    PriceObservation,
+    Product,
+    ShoppingRun,
+)
 from shopping.retailer.client import RetailerError
 
 log = logging.getLogger(__name__)
@@ -48,7 +58,8 @@ def _qty(q) -> str:
 
 
 templates.env.filters.update(money=_money, local=_local, qty=_qty)
-templates.env.globals.update(unit_price=_unit, REASON_CODES=REASON_CODES, PREFERENCE_KINDS=PREFERENCE_KINDS, store_id=settings.store_id)
+templates.env.globals.update(unit_price=_unit, REASON_CODES=REASON_CODES, PREFERENCE_KINDS=PREFERENCE_KINDS, FEEDBACK_TAGS=FEEDBACK_TAGS,
+                             FEEDBACK_TAG_LABELS=FEEDBACK_TAG_LABELS, store_id=settings.store_id)
 
 
 def _back(url: str, msg: str | None = None, err: str | None = None, anchor: str | None = None) -> RedirectResponse:
@@ -90,10 +101,47 @@ def index(request: Request):
         return templates.TemplateResponse(request, "index.html", {"rows": rows, **_auth_ctx()})
 
 
-def _card(session, sel: Selection, prefs) -> dict:
-    obs = sel.observation
-    stats = service.price_stats(session, sel.product, store_id=obs.store_id if obs else None)
-    return {"sel": sel, "p": sel.product, "obs": obs, "stats": stats, "flags": service.preference_flags(prefs, sel.product)}
+def _cards(session, run) -> list[dict]:
+    """One card per requirement: a standalone selection, or a choice group with its options."""
+    prefs = service.active_preferences(session)
+    products = [s.product.retailer_product_id for s in run.selections]
+    fb_hist = fbk.feedback_by_product(session, products)
+    run_feedback: dict[str, list[dict]] = {}
+    for f in session.scalars(select(Feedback).where(Feedback.shopping_run_id == run.id).order_by(Feedback.created_at)):
+        run_feedback.setdefault(f.selection_id, []).append(fbk.feedback_dict(f))
+    reqs = {r["requirement"].lower(): r for r in fbk.requirement_history(session, sorted({s.requirement for s in run.selections if s.requirement}))}
+
+    def card(sel):
+        obs = sel.observation
+        # Price history and feedback from earlier runs only (not the decision just made in this run).
+        hist = fb_hist.get(sel.product.retailer_product_id)
+        if hist and run_feedback.get(sel.id):
+            hist = None
+        req = reqs.get((sel.requirement or "").lower())
+        if req and req["last_added"] is None and req["last_removed"] is None:
+            req = None
+        return {"sel": sel, "p": sel.product, "obs": obs, "req": req, "fb": hist,
+                "stats": service.price_stats(session, sel.product, store_id=obs.store_id if obs else None),
+                "flags": service.preference_flags(prefs, sel.product)}
+
+    cards = []
+    for sel in run.selections:
+        if sel.choice_group_id is None:
+            cards.append({"kind": "single", "main": card(sel), "options": [], "created": sel.created_at,
+                          "feedback": run_feedback.get(sel.id, [])})
+    for g in run.choice_groups:
+        chosen = next((s for s in g.selections if s.id == g.selected_selection_id), g.selections[0])
+        cards.append({"kind": "group", "group": g, "main": card(chosen), "options": [card(s) for s in g.selections],
+                      "created": g.created_at, "feedback": [f for s in g.selections for f in run_feedback.get(s.id, [])]})
+    cards.sort(key=lambda c: c["created"])
+    return cards
+
+
+def _status_counts(cards) -> dict:
+    counts: dict[str, int] = {}
+    for c in cards:
+        counts[c["main"]["sel"].status] = counts.get(c["main"]["sel"].status, 0) + 1
+    return counts
 
 
 @router.get("/runs/{run_id}", response_class=HTMLResponse)
@@ -103,55 +151,56 @@ def run_page(request: Request, run_id: str):
             run = service.get_run(session, run_id)
         except service.ShoppingError as exc:
             return HTMLResponse(str(exc), status_code=404)
-        prefs = service.active_preferences(session)
-        # One card per requirement: standalone selection, or a choice group with its options.
-        cards = []
-        for sel in run.selections:
-            if sel.choice_group_id is None:
-                cards.append({"kind": "single", "pos": sel.position, "created": sel.created_at, "main": _card(session, sel, prefs), "options": []})
-        for g in run.choice_groups:
-            chosen = next((s for s in g.selections if s.id == g.selected_selection_id), g.selections[0])
-            cards.append({"kind": "group", "group": g, "pos": g.position, "created": g.created_at, "main": _card(session, chosen, prefs),
-                          "options": [_card(session, s, prefs) for s in g.selections]})
-        cards.sort(key=lambda c: (c["created"], c["pos"]))
-        snapshot = [c["main"]["sel"].id for c in cards]
-        counts = {}
-        for c in cards:
-            counts[c["main"]["sel"].status] = counts.get(c["main"]["sel"].status, 0) + 1
+        cards = _cards(session, run)
+        sections = [(key, title, [c for c in cards if fbk.section_of(c["main"]["sel"]) == key]) for key, title in fbk.SECTIONS]
         return templates.TemplateResponse(request, "run.html", {
-            "run": run, "cards": cards, "snapshot": ",".join(snapshot), "counts": counts,
-            "total": service.estimated_total(run), "editable": run.status not in ("applied", "cancelled"), **_auth_ctx(),
+            "run": run, "sections": sections, "cards": cards, "snapshot": ",".join(c["main"]["sel"].id for c in cards),
+            "counts": _status_counts(cards), "total": service.estimated_total(run),
+            "editable": run.status not in ("applied", "cancelled"), **_auth_ctx(),
         })
 
 
-@router.post("/runs/{run_id}/selections/{sel_id}/decide")
-def decide(run_id: str, sel_id: str, decision: str = Form(...)):
+@router.get("/runs/{run_id}/triage", response_class=HTMLResponse)
+def triage_page(request: Request, run_id: str, skipped: str = ""):
     with session_scope() as session:
         try:
-            service.decide_selection(session, sel_id, approve=(decision == "approve"))
+            run = service.get_run(session, run_id)
         except service.ShoppingError as exc:
-            return _back(f"/runs/{run_id}", err=str(exc))
-    return _back(f"/runs/{run_id}", anchor=f"card-{sel_id}")
+            return HTMLResponse(str(exc), status_code=404)
+        cards = _cards(session, run)
+        skip_ids = {x for x in skipped.split(",") if x}
+        order = {k: i for i, (k, _) in enumerate(fbk.SECTIONS)}
+        pending = [c for c in cards if c["main"]["sel"].status == "pending"]
+        pending.sort(key=lambda c: (order[fbk.section_of(c["main"]["sel"])], c["created"]))
+        todo = [c for c in pending if c["main"]["sel"].id not in skip_ids] or pending  # all skipped: go round again
+        if not todo or run.status in ("applied", "cancelled"):
+            return _back(f"/runs/{run_id}", msg="Nothing left to triage. Review the list, then apply approved items to the cart.")
+        card = todo[0]
+        return templates.TemplateResponse(request, "triage.html", {
+            "run": run, "card": card, "done": len(cards) - len(pending), "total_items": len(cards), "remaining": len(pending),
+            "skipped": ",".join(sorted(skip_ids)) if len(todo) < len(pending) else "",
+            "section_title": dict(fbk.SECTIONS)[fbk.section_of(card["main"]["sel"])], **_auth_ctx(),
+        })
 
 
-@router.post("/runs/{run_id}/selections/{sel_id}/quantity")
-def set_quantity(run_id: str, sel_id: str, quantity: float = Form(...)):
+@router.post("/runs/{run_id}/selections/{sel_id}/triage")
+def triage_submit(run_id: str, sel_id: str, decision: str = Form(...), option: str = Form(""), tags: list[str] = Form([]),
+                  note: str = Form(""), rule: str = Form(""), quantity: float | None = Form(None), return_to: str = Form("run"),
+                  skipped: str = Form("")):
     with session_scope() as session:
         try:
-            service.user_set_selection_quantity(session, sel_id, quantity)
+            if decision == "keep" and option and option != sel_id:
+                decision = "choose"
+            # Only keep tags that fit the decision actually taken (the form shows all chip groups).
+            action = {"keep": "approved", "remove": "removed", "choose": "chose_alternative"}.get(decision, "")
+            tags = [t for t in tags if t in FEEDBACK_TAGS.get(action, {}) or t == "other"]
+            fbk.triage(session, sel_id, decision=decision, chosen_selection_id=option or None, tags=tags, note=note,
+                       rule=rule or None, quantity=quantity)
         except service.ShoppingError as exc:
-            return _back(f"/runs/{run_id}", err=str(exc))
-    return _back(f"/runs/{run_id}", anchor=f"card-{sel_id}")
-
-
-@router.post("/runs/{run_id}/groups/{group_id}/choose")
-def choose(run_id: str, group_id: str, selection_id: str = Form(...)):
-    with session_scope() as session:
-        try:
-            service.choose_alternative(session, group_id, selection_id)
-        except service.ShoppingError as exc:
-            return _back(f"/runs/{run_id}", err=str(exc))
-    return _back(f"/runs/{run_id}", anchor=f"group-{group_id}")
+            return _back(f"/runs/{run_id}" + ("/triage" if return_to == "triage" else ""), err=str(exc))
+    if return_to == "triage":
+        return _back(f"/runs/{run_id}/triage" + (f"?skipped={quote(skipped)}" if skipped else ""))
+    return _back(f"/runs/{run_id}", anchor=f"card-{option or sel_id}")
 
 
 @router.post("/runs/{run_id}/approve-all")
@@ -198,29 +247,6 @@ def cancel(run_id: str):
         except service.ShoppingError as exc:
             return _back(f"/runs/{run_id}", err=str(exc))
     return _back(f"/runs/{run_id}", msg="Run cancelled.")
-
-
-@router.post("/runs/{run_id}/selections/{sel_id}/preference")
-def quick_preference(run_id: str, sel_id: str, kind: str = Form(...)):
-    with session_scope() as session:
-        sel = session.get(Selection, sel_id)
-        if sel is None:
-            return _back(f"/runs/{run_id}", err="Unknown selection.")
-        p = sel.product
-        scope = sel.requirement
-        if kind in ("prefer_product", "blacklist_product", "prefer_for_type"):
-            target, label = p.retailer_product_id, f"{p.brand + ' ' if p.brand else ''}{p.name} {p.raw_size or ''}".strip()
-        elif kind in ("prefer_brand", "blacklist_brand"):
-            if not p.brand:
-                return _back(f"/runs/{run_id}", err="This product has no brand recorded.")
-            target, label = p.brand, p.brand
-            scope = None if kind == "blacklist_brand" else scope
-        else:
-            return _back(f"/runs/{run_id}", err="Unsupported preference.")
-        if kind == "blacklist_product":
-            scope = None
-        service.add_preference(session, kind=kind, scope=scope, target=target, target_label=label, source_selection_id=sel.id)
-    return _back(f"/runs/{run_id}", msg=f"Saved: {PREFERENCE_KINDS[kind]} — {label}" + (f" (for {scope})" if scope else ""), anchor=f"card-{sel_id}")
 
 
 # -- history ------------------------------------------------------------------------------
@@ -299,6 +325,52 @@ def edit_pref(pref_id: int, scope: str = Form(""), note: str = Form(""), weight:
         if pref:
             pref.scope, pref.note, pref.weight = scope.strip() or None, note.strip() or None, weight
     return _back("/preferences", msg="Preference updated.")
+
+
+# -- feedback ---------------------------------------------------------------------------------
+
+@router.get("/feedback", response_class=HTMLResponse)
+def feedback_page(request: Request, action: str = "", tag: str = "", requirement: str = "", unreviewed: str = "", ids: str = ""):
+    with session_scope() as session:
+        if ids:
+            wanted = {int(i) for i in ids.split(",") if i.isdigit()}
+            rows = [r for r in fbk.list_feedback(session, limit=1000) if r.id in wanted]
+        else:
+            rows = fbk.list_feedback(session, action=action or None, tag=tag or None, requirement=requirement or None,
+                                     unreviewed_only=bool(unreviewed))
+        f = {"action": action, "tag": tag, "requirement": requirement, "unreviewed": bool(unreviewed),
+             "any": bool(action or tag or requirement or unreviewed or ids)}
+        return templates.TemplateResponse(request, "feedback.html", {
+            "rows": [fbk.feedback_dict(r) for r in rows], "summary": fbk.feedback_summary(session), "f": f, **_auth_ctx(),
+        })
+
+
+@router.post("/feedback/review")
+def feedback_review(ids: list[int] = Form([]), resolution: str = Form("")):
+    with session_scope() as session:
+        n = fbk.mark_reviewed(session, ids, resolution)
+    return _back("/feedback", msg=f"Marked {n} record(s) reviewed.")
+
+
+@router.post("/feedback/pattern")
+def feedback_pattern(kind: str = Form(...), scope: str = Form(""), target: str = Form(""), target_label: str = Form(""), ids: str = Form("")):
+    with session_scope() as session:
+        try:
+            pref = service.add_preference(session, kind=kind, scope=scope or None, target=target or None, target_label=target_label or None)
+        except service.ShoppingError as exc:
+            return _back("/feedback", err=str(exc))
+        fbk.mark_reviewed(session, [int(i) for i in ids.split(",") if i.isdigit()], f"Rule #{pref.id} created")
+    return _back("/feedback", msg=f"Rule saved: {PREFERENCE_KINDS.get(kind, kind)}" + (f" — {target_label}" if target_label else ""))
+
+
+@router.post("/feedback/note")
+def feedback_note(note: str = Form(...), requirement: str = Form("")):
+    with session_scope() as session:
+        try:
+            fbk.add_note(session, note=note, requirement=requirement.strip() or None)
+        except service.ShoppingError as exc:
+            return _back("/feedback", err=str(exc))
+    return _back("/feedback", msg="Note saved.")
 
 
 # -- cart ------------------------------------------------------------------------------------

@@ -1,42 +1,12 @@
 {% extends "base.html" %}
+{% from "_macros.html" import item_card with context %}
 {% block title %}{{ run.summary }} · Review{% endblock %}
-
-{% macro price_block(c) %}
-  {% set o = c.obs %}
-  <div class="price">
-    <div class="now {{ 'sale' if o and o.sale_price }}">{{ o.effective_price | money if o else '—' }}</div>
-    {% if o and o.sale_price and o.regular_price and o.regular_price > o.effective_price %}<div class="was">{{ o.regular_price | money }}</div>{% endif %}
-    {% if o %}<div class="unit">{{ unit_price(o.unit_price, o.unit_price_basis) }}{% if o.size_estimated %} · est.{% endif %}</div>{% endif %}
-  </div>
-{% endmacro %}
-
-{% macro history_line(c) %}
-  {% set s = c.stats %}
-  {% if s.days_observed and s.days_observed > 1 %}
-  <div class="history-line">
-    {% if s.previous_price %}Previously <strong>{{ s.previous_price | money }}</strong> ({{ s.previous_price_date }}) · {% endif %}
-    Lowest seen <strong>{{ s.min_price | money }}</strong> · 90-day avg {{ s.avg_90d | money }}
-    {% if s.is_lowest_observed %} · <strong>lowest price we've seen</strong>{% endif %}
-    {% if s.package_size_changed %} · <strong>package size has changed</strong>{% endif %}
-  </div>
-  {% else %}
-  <div class="history-line">No earlier prices recorded yet.</div>
-  {% endif %}
-{% endmacro %}
-
-{% macro badges(c) %}
-  <div class="badges">
-    {% for r in c.sel.reason_codes %}<span class="badge {{ r }}">{{ REASON_CODES.get(r, r) }}</span>{% endfor %}
-    {% if c.obs and c.obs.deal_text %}<span class="badge deal">{{ c.obs.deal_text }}</span>{% endif %}
-    {% if c.obs and c.obs.pc_optimum_text %}<span class="badge pref">{{ c.obs.pc_optimum_text }}</span>{% endif %}
-    {% for f in c.flags %}<span class="badge pref">{{ f.replace('_', ' ') }}</span>{% endfor %}
-  </div>
-{% endmacro %}
 
 {% block content %}
 <div class="run-head">
   <h1>{{ run.summary }}</h1>
   <span class="status {{ run.status }}">{{ run.status.replace('_', ' ') }}</span>
+  {% if editable and counts.get('pending') %}<a class="btn primary" href="/runs/{{ run.id }}/triage">Triage {{ counts.get('pending') }} pending →</a>{% endif %}
 </div>
 <p class="muted small">Created {{ run.created_at | local }} · Store {{ run.store_id }}
   {% for k, v in counts.items() %} · {{ v }} {{ k }}{% endfor %}</p>
@@ -44,85 +14,11 @@
 
 {% if not cards %}<div class="empty">The agent hasn't added anything to this run yet.</div>{% endif %}
 
-{% for card in cards %}
-  {% set m = card.main %}
-  {% set sel = m.sel %}
-  <section class="card decided-{{ sel.status }}" id="{{ 'group-' ~ card.group.id if card.kind == 'group' else 'card-' ~ sel.id }}">
-    <span id="card-{{ sel.id }}"></span>
-    <div class="req">
-      <h3>{{ card.group.label if card.kind == 'group' else (sel.requirement or m.p.name) }}</h3>
-      <span class="status {{ sel.status }}">{{ sel.status }}</span>
-    </div>
-
-    <div class="product">
-      {% if m.p.image_url %}<img src="{{ m.p.image_url }}" alt="" loading="lazy">{% else %}<div></div>{% endif %}
-      <div>
-        <div class="brand">{{ m.p.brand or '' }}</div>
-        <div class="name"><a href="/history/{{ m.p.retailer_product_id }}">{{ m.p.name }}</a> <span class="muted">{{ m.p.raw_size or '' }}</span></div>
-        {{ history_line(m) }}
-      </div>
-      {{ price_block(m) }}
-    </div>
-    {{ badges(m) }}
-    {% if sel.rationale %}<p class="rationale">{{ sel.rationale }}</p>{% endif %}
-    {% if sel.last_error and sel.status == 'failed' %}<div class="error-line">Cart update failed: {{ sel.last_error }}</div>{% endif %}
-
-    {% if card.kind == 'group' and card.options | length > 1 %}
-    <div class="options">
-      <div class="small muted">Options</div>
-      {% for opt in card.options %}
-        {% set chosen = opt.sel.id == card.group.selected_selection_id %}
-        <div class="option {{ 'chosen' if chosen }}">
-          <div>
-            <span class="oname">{{ '●' if chosen else '○' }} {{ opt.p.brand or '' }} {{ opt.p.name }} {{ opt.p.raw_size or '' }}</span>
-            {% if opt.sel.id == card.group.recommended_selection_id %}<span class="tag">Recommended</span>{% endif %}
-            {% if opt.sel.rationale and not chosen %}<div class="small muted">{{ opt.sel.rationale }}</div>{% endif %}
-          </div>
-          <div class="small num">
-            {{ opt.obs.effective_price | money if opt.obs }}{% if opt.obs and opt.obs.deal_text %} <span class="muted">({{ opt.obs.deal_text }})</span>{% endif %}<br>
-            <span class="muted">{{ unit_price(opt.obs.unit_price, opt.obs.unit_price_basis) if opt.obs }}</span>
-          </div>
-          <div>
-            {% if not chosen and editable and opt.sel.status != 'applied' %}
-            <form class="inline" method="post" action="/runs/{{ run.id }}/groups/{{ card.group.id }}/choose">
-              <input type="hidden" name="selection_id" value="{{ opt.sel.id }}"><button class="link">Choose</button>
-            </form>
-            {% endif %}
-          </div>
-        </div>
-      {% endfor %}
-    </div>
-    {% endif %}
-
-    {% if editable and sel.status != 'applied' %}
-    <div class="actions">
-      <form class="inline" method="post" action="/runs/{{ run.id }}/selections/{{ sel.id }}/quantity">
-        <label class="small muted">Qty <input type="number" name="quantity" value="{{ sel.quantity | qty }}" min="0.1" step="any"></label>
-        <button class="link">Update</button>
-      </form>
-      <span class="spacer"></span>
-      <form class="inline" method="post" action="/runs/{{ run.id }}/selections/{{ sel.id }}/decide">
-        <input type="hidden" name="decision" value="reject"><button class="danger" {{ 'disabled' if sel.status == 'rejected' }}>Reject</button>
-      </form>
-      <form class="inline" method="post" action="/runs/{{ run.id }}/selections/{{ sel.id }}/decide">
-        <input type="hidden" name="decision" value="approve"><button class="primary" {{ 'disabled' if sel.status == 'approved' }}>Approve</button>
-      </form>
-    </div>
-    {% else %}
-    <div class="actions small muted">Quantity {{ sel.quantity | qty }}{% if sel.applied_to_cart_at %} · added to cart {{ sel.applied_to_cart_at | local }}{% endif %}</div>
-    {% endif %}
-
-    <details class="prefs">
-      <summary>Remember a preference…</summary>
-      <div class="row">
-        {% for kind, label in [('prefer_product', 'Prefer this product'), ('prefer_brand', 'Prefer this brand'), ('prefer_for_type', 'Prefer this for “' ~ (sel.requirement or 'this item') ~ '”'), ('blacklist_product', "Don't suggest this product"), ('blacklist_brand', "Don't suggest this brand")] %}
-        <form class="inline" method="post" action="/runs/{{ run.id }}/selections/{{ sel.id }}/preference">
-          <input type="hidden" name="kind" value="{{ kind }}"><button class="{{ 'danger' if kind.startswith('blacklist') }}">{{ label }}</button>
-        </form>
-        {% endfor %}
-      </div>
-    </details>
-  </section>
+{% for key, title, section_cards in sections %}
+  {% if section_cards %}
+  <h2 class="section-head">{{ title }} <span class="muted small">{{ section_cards | length }}</span></h2>
+  {% for card in section_cards %}{{ item_card(run, card, editable, "run") }}{% endfor %}
+  {% endif %}
 {% endfor %}
 
 <div class="bottom-bar"><div class="inner">

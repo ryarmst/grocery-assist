@@ -1,0 +1,18 @@
+{% extends "base.html" %}
+{% from "_macros.html" import item_card with context %}
+{% block title %}Triage · {{ run.summary }}{% endblock %}
+
+{% block content %}
+<div class="run-head">
+  <h1>Triage</h1>
+  <span class="muted">{{ run.summary }}</span>
+  <a class="small" href="/runs/{{ run.id }}">← back to full list</a>
+</div>
+<div class="progress"><div class="bar" style="width: {{ (done / total_items * 100) if total_items else 0 }}%"></div></div>
+<p class="muted small">{{ done }} of {{ total_items }} decided · {{ remaining }} pending · section: <strong>{{ section_title }}</strong></p>
+
+{{ item_card(run, card, True, "triage") }}
+
+<p class="muted small">Approve keeps the selected option (or switches to the one you picked). Remove drops the item.
+  Reasons and notes are optional and are collected on the <a href="/feedback">Feedback</a> page for later review.</p>
+{% endblock %}

@@ -1,0 +1,120 @@
+{% macro price_block(o) %}
+  <div class="price">
+    <div class="now {{ 'sale' if o and o.sale_price }}">{{ o.effective_price | money if o else '—' }}</div>
+    {% if o and o.sale_price and o.regular_price and o.regular_price > o.effective_price %}<div class="was">{{ o.regular_price | money }}</div>{% endif %}
+    {% if o %}<div class="unit">{{ unit_price(o.unit_price, o.unit_price_basis) }}{% if o.size_estimated %} · est.{% endif %}</div>{% endif %}
+  </div>
+{% endmacro %}
+
+{% macro history_line(c) %}
+  {% set s = c.stats %}
+  <div class="history-line">
+  {% if s.days_observed and s.days_observed > 1 %}
+    {% if s.previous_price %}Previously <strong>{{ s.previous_price | money }}</strong> ({{ s.previous_price_date }}) · {% endif %}
+    Lowest seen <strong>{{ s.min_price | money }}</strong> · 90-day avg {{ s.avg_90d | money }}
+    {% if s.is_lowest_observed %} · <strong>lowest price we've seen</strong>{% endif %}
+    {% if s.package_size_changed %} · <strong>package size has changed</strong>{% endif %}
+  {% else %}No earlier prices recorded yet.{% endif %}
+  {% if c.req %}{% if c.req.last_added %} · Last bought {{ c.req.last_added.date }} ({{ c.req.last_added.quantity | qty }}){% endif %}{% if c.req.last_removed %} · Last skipped {{ c.req.last_removed.date }}{% endif %}{% endif %}
+  </div>
+  {% if c.fb %}<div class="history-line warn-line">You've {% if c.fb.removed %}removed this {{ c.fb.removed }}×{% endif %}{% if c.fb.removed and c.fb.passed_over %} and {% endif %}{% if c.fb.passed_over %}passed it over {{ c.fb.passed_over }}×{% endif %} before{% if c.fb.last_note %}: “{{ c.fb.last_note }}”{% endif %}</div>{% endif %}
+{% endmacro %}
+
+{% macro badges(c) %}
+  <div class="badges">
+    {% for r in c.sel.reason_codes %}<span class="badge {{ r }}">{{ REASON_CODES.get(r, r) }}</span>{% endfor %}
+    {% if c.obs and c.obs.deal_text %}<span class="badge deal">{{ c.obs.deal_text }}</span>{% endif %}
+    {% if c.obs and c.obs.pc_optimum_text %}<span class="badge pref">{{ c.obs.pc_optimum_text }}</span>{% endif %}
+    {% for f in c.flags %}<span class="badge pref">{{ f.replace('_', ' ') }}</span>{% endfor %}
+  </div>
+{% endmacro %}
+
+{# One review card. mode = "run" (list view) or "triage" (one at a time, reasons open). #}
+{% macro item_card(run, card, editable, mode="run") %}
+  {% set m = card.main %}
+  {% set sel = m.sel %}
+  {% set is_group = card.kind == 'group' and card.options | length > 1 %}
+  <section class="card decided-{{ sel.status }} {{ 'triage-card' if mode == 'triage' }}" id="{{ 'group-' ~ card.group.id if card.kind == 'group' else 'card-' ~ sel.id }}">
+    <span id="card-{{ sel.id }}"></span>
+    <div class="req">
+      <h3>{{ card.group.label if card.kind == 'group' else (sel.requirement or m.p.name) }}</h3>
+      <span class="status {{ sel.status }}">{{ sel.status }}</span>
+    </div>
+
+    <div class="product">
+      {% if m.p.image_url %}<img src="{{ m.p.image_url }}" alt="" loading="lazy">{% else %}<div></div>{% endif %}
+      <div>
+        <div class="brand">{{ m.p.brand or '' }}</div>
+        <div class="name"><a href="/history/{{ m.p.retailer_product_id }}">{{ m.p.name }}</a> <span class="muted">{{ m.p.raw_size or '' }}</span></div>
+        {{ history_line(m) }}
+      </div>
+      {{ price_block(m.obs) }}
+    </div>
+    {{ badges(m) }}
+    {% if sel.rationale %}<p class="rationale">{{ sel.rationale }}</p>{% endif %}
+    {% if sel.last_error and sel.status == 'failed' %}<div class="error-line">Cart update failed: {{ sel.last_error }}</div>{% endif %}
+    {% for f in card.feedback %}<div class="fb-line">✎ {{ f.action.replace('_', ' ') }}{% if f.tag_labels %} — {{ f.tag_labels | join(', ') }}{% endif %}{% if f.note %}: “{{ f.note }}”{% endif %}</div>{% endfor %}
+
+    {% if editable and sel.status != 'applied' %}
+    <form method="post" action="/runs/{{ run.id }}/selections/{{ sel.id }}/triage" class="triage-form">
+      <input type="hidden" name="return_to" value="{{ mode }}">
+      {% if mode == 'triage' %}<input type="hidden" name="skipped" value="{{ skipped | default('') }}">{% endif %}
+      {% if is_group %}
+      <div class="options">
+        <div class="small muted">Options — pick one, then Approve</div>
+        {% for opt in card.options %}
+          {% set chosen = opt.sel.id == card.group.selected_selection_id %}
+          <label class="option {{ 'chosen' if chosen }}">
+            <span><input type="radio" name="option" value="{{ opt.sel.id }}" {{ 'checked' if chosen }}>
+              <span class="oname">{{ opt.p.brand or '' }} {{ opt.p.name }} {{ opt.p.raw_size or '' }}</span>
+              {% if opt.sel.id == card.group.recommended_selection_id %}<span class="tag">Recommended</span>{% endif %}
+              {% if opt.sel.rationale and not chosen %}<span class="small muted block">{{ opt.sel.rationale }}</span>{% endif %}
+              {% if opt.fb %}<span class="small warn-line block">Previously removed/passed over{% if opt.fb.last_note %}: “{{ opt.fb.last_note }}”{% endif %}</span>{% endif %}
+            </span>
+            <span class="small num">{{ opt.obs.effective_price | money if opt.obs }}{% if opt.obs and opt.obs.deal_text %} <span class="muted">({{ opt.obs.deal_text }})</span>{% endif %}<br>
+              <span class="muted">{{ unit_price(opt.obs.unit_price, opt.obs.unit_price_basis) if opt.obs }}</span></span>
+          </label>
+        {% endfor %}
+      </div>
+      {% endif %}
+
+      <details class="why" {{ 'open' if mode == 'triage' }}>
+        <summary>Why? <span class="muted small">(optional — reasons are saved for later review)</span></summary>
+        <div class="chip-group"><span class="chip-head">Removing</span>
+          {% for code, label in FEEDBACK_TAGS.removed.items() %}<label class="chip"><input type="checkbox" name="tags" value="{{ code }}"><span>{{ label }}</span></label>{% endfor %}
+        </div>
+        {% if is_group %}
+        <div class="chip-group"><span class="chip-head">Picking another option</span>
+          {% for code, label in FEEDBACK_TAGS.chose_alternative.items() %}<label class="chip"><input type="checkbox" name="tags" value="{{ code }}"><span>{{ label }}</span></label>{% endfor %}
+        </div>
+        {% endif %}
+        <div class="chip-group"><span class="chip-head">Keeping</span>
+          {% for code, label in FEEDBACK_TAGS.approved.items() %}<label class="chip"><input type="checkbox" name="tags" value="{{ code }}"><span>{{ label }}</span></label>{% endfor %}
+          <label class="chip"><input type="checkbox" name="tags" value="other"><span>Other</span></label>
+        </div>
+        <textarea name="note" class="note" placeholder="In your words — e.g. “still have two jars”, “kids won't eat the light version”"></textarea>
+        <label class="small muted rule">Also make it a rule:
+          <select name="rule">
+            <option value="">— no rule —</option>
+            <option value="prefer_product">Prefer this product{{ ' (the one I picked)' if is_group }}</option>
+            <option value="prefer_brand">Prefer this brand{{ ' (of the one I picked)' if is_group }}</option>
+            <option value="prefer_for_type">Use this for “{{ sel.requirement or 'this item' }}”</option>
+            <option value="blacklist_product">Don't suggest this product again</option>
+            <option value="blacklist_brand">Don't suggest this brand again</option>
+          </select>
+        </label>
+      </details>
+
+      <div class="actions">
+        <label class="small muted">Qty <input type="number" name="quantity" value="{{ sel.quantity | qty }}" min="0.1" step="any"></label>
+        <span class="spacer"></span>
+        {% if mode == 'triage' %}<a class="btn" href="/runs/{{ run.id }}/triage?skipped={{ ((skipped | default('')) ~ ',' ~ sel.id) | urlencode }}">Skip</a>{% endif %}
+        <button class="danger" name="decision" value="remove">Remove</button>
+        <button class="primary" name="decision" value="keep">Approve{{ ' & next' if mode == 'triage' }}</button>
+      </div>
+    </form>
+    {% else %}
+    <div class="actions small muted">Quantity {{ sel.quantity | qty }}{% if sel.applied_to_cart_at %} · added to cart {{ sel.applied_to_cart_at | local }}{% endif %}</div>
+    {% endif %}
+  </section>
+{% endmacro %}

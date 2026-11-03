@@ -239,6 +239,61 @@ class CartAction(Base):
     upstream_reference: Mapped[str | None] = mapped_column(String(64))  # retailer cart id
 
 
+# Quick reason chips shown when triaging. Free text is always allowed alongside.
+FEEDBACK_TAGS = {
+    "removed": {
+        "have_enough": "Have enough / not needed",
+        "too_expensive": "Too expensive",
+        "not_a_deal": "Not a real deal",
+        "wrong_size": "Wrong size",
+        "wrong_item": "Not what I meant",
+        "dislike_product": "Don't like this product",
+        "dislike_brand": "Don't like this brand",
+        "quality": "Quality concern",
+        "buy_elsewhere": "Buying elsewhere",
+    },
+    "chose_alternative": {
+        "cheaper": "Cheaper",
+        "better_unit_price": "Better unit price",
+        "better_size": "Better size",
+        "prefer_brand": "Preferred brand",
+        "prefer_product": "Preferred product",
+        "better_quality": "Better quality",
+        "healthier": "Healthier / ingredients",
+    },
+    "approved": {
+        "good_pick": "Good pick",
+        "good_deal": "Good deal",
+    },
+}
+FEEDBACK_TAG_LABELS = {k: v for tags in FEEDBACK_TAGS.values() for k, v in tags.items()} | {"other": "Other"}
+
+
+class Feedback(Base):
+    """A triage decision with the user's reason, kept for later pattern review."""
+
+    __tablename__ = "feedback"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow, index=True)
+    shopping_run_id: Mapped[str | None] = mapped_column(ForeignKey("shopping_runs.id"), index=True)
+    selection_id: Mapped[str | None] = mapped_column(ForeignKey("selections.id"), index=True)
+    choice_group_id: Mapped[str | None] = mapped_column(String(16))
+    product_id: Mapped[int | None] = mapped_column(ForeignKey("products.id"), index=True)  # the item decided on
+    chosen_product_id: Mapped[int | None] = mapped_column(ForeignKey("products.id"))  # for chose_alternative
+    requirement: Mapped[str | None] = mapped_column(String(128), index=True)
+    action: Mapped[str] = mapped_column(String(32), index=True)  # removed | chose_alternative | approved | quantity_changed | note
+    tags: Mapped[list] = mapped_column(JSONList, default=list)
+    note: Mapped[str | None] = mapped_column(Text)
+    context: Mapped[str | None] = mapped_column(Text)  # JSON snapshot: prices, agent reasons, options
+    preference_id: Mapped[int | None] = mapped_column(ForeignKey("preferences.id"))  # rule created alongside, if any
+    reviewed_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
+    resolution: Mapped[str | None] = mapped_column(Text)  # what was done about it when reviewed
+
+    product: Mapped[Product | None] = relationship(foreign_keys=[product_id])
+    chosen_product: Mapped[Product | None] = relationship(foreign_keys=[chosen_product_id])
+
+
 class AppSetting(Base):
     __tablename__ = "app_settings"
 

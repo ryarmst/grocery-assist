@@ -5,6 +5,7 @@ from __future__ import annotations
 import contextlib
 import hmac
 import logging
+import socket
 
 import uvicorn
 from fastapi import FastAPI
@@ -47,7 +48,7 @@ def _transport_security() -> TransportSecuritySettings:
     return TransportSecuritySettings(enable_dns_rebinding_protection=True, allowed_hosts=hosts, allowed_origins=origins)
 
 
-mcp_app = mcp.streamable_http_app(streamable_http_path="/", transport_security=_transport_security(), host=settings.host)
+mcp_app = mcp.streamable_http_app(streamable_http_path="/", transport_security=_transport_security(), host=settings.host.split(",")[0].strip())
 
 
 @contextlib.asynccontextmanager
@@ -73,8 +74,24 @@ def healthz():
     return {"ok": True, "auth": context.auth.status().state}
 
 
+def _listen_sockets() -> list[socket.socket]:
+    """HOST may list several addresses (e.g. "127.0.0.1,192.168.56.10") so the app can be reached
+    on loopback plus one specific interface without binding to every interface."""
+    socks = []
+    for host in [h.strip() for h in settings.host.split(",") if h.strip()]:
+        family = socket.AF_INET6 if ":" in host else socket.AF_INET
+        s = socket.socket(family, socket.SOCK_STREAM)
+        s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        s.bind((host, settings.port))
+        s.set_inheritable(True)
+        socks.append(s)
+        log.info("listening on http://%s:%s", f"[{host}]" if family == socket.AF_INET6 else host, settings.port)
+    return socks
+
+
 def main() -> None:
-    uvicorn.run("shopping.app:app", host=settings.host, port=settings.port, log_config=None, proxy_headers=True)
+    config = uvicorn.Config("shopping.app:app", port=settings.port, log_config=None, proxy_headers=True)
+    uvicorn.Server(config).run(sockets=_listen_sockets())
 
 
 if __name__ == "__main__":

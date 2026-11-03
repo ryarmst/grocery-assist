@@ -1,0 +1,97 @@
+{% extends "base.html" %}
+{% block title %}Feedback{% endblock %}
+{% block content %}
+<h1>Feedback</h1>
+<p class="muted small">Every remove or swap you make during review, with your reasons. Look here for patterns worth turning into
+rules, app features, or changes to the shopping skill. The agent can read these too (<code>shopping_get_feedback</code>).</p>
+
+<div class="grid2" style="margin:12px 0">
+  <div class="stat"><div class="k">Records ({{ summary.days }} days)</div><div class="v">{{ summary.total }}</div></div>
+  <div class="stat"><div class="k">Not yet reviewed</div><div class="v">{{ summary.unreviewed }}</div></div>
+  <div class="stat"><div class="k">With notes</div><div class="v">{{ summary.with_notes }}</div></div>
+  <div class="stat"><div class="k">Removed / swapped</div><div class="v">{{ summary.by_action.get('removed', 0) }} / {{ summary.by_action.get('chose_alternative', 0) }}</div></div>
+</div>
+
+<h2>Suggested patterns</h2>
+{% if summary.patterns %}
+  {% for p in summary.patterns %}
+  <div class="card pattern">
+    <div class="req"><h3>{{ p.description }}{% if p.target_label %} — {{ p.target_label }}{% endif %}{% if p.scope %} <span class="muted">(for {{ p.scope }})</span>{% endif %}</h3>
+      <span class="status">{{ p.evidence }} records</span></div>
+    <p class="small">{{ p.why }}</p>
+    <div class="actions">
+      {% if p.actionable %}
+      <form class="inline" method="post" action="/feedback/pattern">
+        <input type="hidden" name="kind" value="{{ p.kind }}"><input type="hidden" name="scope" value="{{ p.scope or '' }}">
+        <input type="hidden" name="target" value="{{ p.target or '' }}"><input type="hidden" name="target_label" value="{{ p.target_label or '' }}">
+        <input type="hidden" name="ids" value="{{ p.feedback_ids | join(',') }}">
+        <button class="primary">Create this rule</button>
+      </form>
+      {% else %}
+      <span class="small muted">Not a rule — handle in the skill/app (e.g. suggest this less often). Mark reviewed below once handled.</span>
+      {% endif %}
+      <a class="small" href="/feedback?ids={{ p.feedback_ids | join(',') }}">Show records</a>
+    </div>
+  </div>
+  {% endfor %}
+{% else %}
+<div class="empty">No repeated patterns yet. Suggestions appear once the same kind of decision shows up a few times.</div>
+{% endif %}
+
+{% if summary.by_tag_code %}
+<h2>Reasons used</h2>
+<div class="badges">{% for code, n in summary.by_tag_code.items() %}<a class="badge" href="/feedback?tag={{ code }}">{{ FEEDBACK_TAG_LABELS.get(code, code) }} · {{ n }}</a>{% endfor %}</div>
+{% endif %}
+
+<h2>Records</h2>
+<form method="get" action="/feedback" class="form-grid">
+  <label>Action
+    <select name="action">
+      <option value="">Any</option>
+      {% for a in ['removed', 'chose_alternative', 'approved', 'quantity_changed', 'note'] %}<option value="{{ a }}" {{ 'selected' if f.action == a }}>{{ a.replace('_', ' ') }}</option>{% endfor %}
+    </select>
+  </label>
+  <label>Reason
+    <select name="tag">
+      <option value="">Any</option>
+      {% for code, label in FEEDBACK_TAG_LABELS.items() %}<option value="{{ code }}" {{ 'selected' if f.tag == code }}>{{ label }}</option>{% endfor %}
+    </select>
+  </label>
+  <label>Item <input type="text" name="requirement" value="{{ f.requirement or '' }}" placeholder="e.g. milk"></label>
+  <label><span><input type="checkbox" name="unreviewed" value="1" {{ 'checked' if f.unreviewed }}> Unreviewed only</span></label>
+  <button>Filter</button>
+</form>
+
+<form method="post" action="/feedback/note" class="form-grid" style="margin-top:10px">
+  <label style="grid-column: span 2">Add a general note <input type="text" name="note" placeholder="e.g. switch to bigger eggs when baking season starts" required></label>
+  <label>About item (optional) <input type="text" name="requirement" placeholder="e.g. eggs"></label>
+  <button>Save note</button>
+</form>
+
+{% if rows %}
+<form method="post" action="/feedback/review">
+<div class="table-wrap" style="margin-top:12px"><table>
+  <thead><tr><th></th><th>Date</th><th>Item</th><th>Decision</th><th>Reasons</th><th>Note</th><th>Reviewed</th></tr></thead>
+  <tbody>
+  {% for r in rows %}
+  <tr class="{{ 'muted' if r.reviewed }}">
+    <td>{% if not r.reviewed %}<input type="checkbox" name="ids" value="{{ r.id }}">{% endif %}</td>
+    <td class="small">{{ r.date[:10] }}{% if r.run_id %}<br><a href="/runs/{{ r.run_id }}">run</a>{% endif %}</td>
+    <td>{{ r.requirement or '' }}<div class="small muted">{% if r.product_id %}<a href="/history/{{ r.product_id }}">{{ r.product }}</a>{% endif %}{% if r.price %} · {{ r.price | money }}{% endif %}</div></td>
+    <td class="small">{{ r.action.replace('_', ' ') }}{% if r.chosen_product %}<br>→ <a href="/history/{{ r.chosen_product_id }}">{{ r.chosen_product }}</a>{% if r.chosen_price %} · {{ r.chosen_price | money }}{% endif %}{% endif %}{% if r.rule_created %}<br><span class="badge pref">rule saved</span>{% endif %}</td>
+    <td class="small">{{ r.tag_labels | join(', ') }}</td>
+    <td class="small">{{ r.note or '' }}</td>
+    <td class="small">{% if r.reviewed %}✓ {{ r.resolution or '' }}{% endif %}</td>
+  </tr>
+  {% endfor %}
+  </tbody>
+</table></div>
+<div class="form-grid" style="margin-top:10px">
+  <label style="grid-column: span 2">Mark selected as reviewed — what did you do about it? <input type="text" name="resolution" placeholder="e.g. added to skill: don't suggest light PB"></label>
+  <button>Mark reviewed</button>
+</div>
+</form>
+{% else %}
+<div class="empty" style="margin-top:12px">No feedback recorded{{ ' for this filter' if f.any }} yet.</div>
+{% endif %}
+{% endblock %}
