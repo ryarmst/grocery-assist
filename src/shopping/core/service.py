@@ -272,8 +272,8 @@ def create_run(session: Session, *, summary: str, store_id: str, notes: str | No
 
 
 def _require_editable(run: ShoppingRun) -> None:
-    if run.status in (RUN_APPLIED, RUN_CANCELLED):
-        raise ShoppingError(f"Run {run.id} is {run.status}; create a new run instead.")
+    if run.status == RUN_CANCELLED:
+        raise ShoppingError(f"Run {run.id} is cancelled; create a new run instead.")
 
 
 def _clean_reasons(reasons: list[str] | None) -> list[str]:
@@ -286,7 +286,7 @@ def _clean_reasons(reasons: list[str] | None) -> list[str]:
 
 async def _stage_selection(session: Session, client: PCExpressClient, run: ShoppingRun, *, product_id: str, quantity: float,
                            reasons: list[str] | None, rationale: str | None, requirement: str | None,
-                           group: ChoiceGroup | None, position: int) -> Selection:
+                           group: ChoiceGroup | None, position: int, added_by: str = "agent") -> Selection:
     if quantity <= 0:
         raise ShoppingError("Quantity must be positive.")
     reasons = _clean_reasons(reasons)
@@ -303,7 +303,8 @@ async def _stage_selection(session: Session, client: PCExpressClient, run: Shopp
         raise ShoppingError(f"Quantity {quantity} exceeds the retailer maximum of {np.max_quantity}.")
     obs = record_observation(session, np, source="selection", store_id=run.store_id, run_id=run.id, dedupe=False)
     sel = Selection(
-        product_id=obs.product_id, price_observation_id=obs.id, quantity=quantity, status=SEL_PENDING,
+        product_id=obs.product_id, price_observation_id=obs.id, quantity=quantity, suggested_quantity=quantity,
+        added_by=added_by, status=SEL_PENDING,
         requirement=requirement or (group.label if group else None), rationale=rationale, reason_codes=reasons, position=position,
     )
     run.selections.append(sel)  # attach via relationships so in-session collections stay current
@@ -537,16 +538,23 @@ def cancel_run(session: Session, run_id: str) -> ShoppingRun:
 
 # -- cart application -----------------------------------------------------------------
 
-async def apply_approved(session: Session, client: PCExpressClient, run_id: str) -> dict:
-    """Push approved, not-yet-applied selections into the retailer cart.
+def product_label(p: Product | None) -> str | None:
+    return None if p is None else " ".join(x for x in [p.brand, p.name, p.raw_size] if x)
+
+
+async def apply_approved(session: Session, client: PCExpressClient, run_id: str, *, only_ids: list[str] | None = None,
+                         source: str = "apply") -> dict:
+    """Push approved, not-yet-applied selections into the retailer cart (all of them, or `only_ids`).
 
     Idempotent per product: the cart quantity is raised to at least the total approved quantity
     for that product in this run, never lowered and never double-added on retry."""
     run = get_run(session, run_id)
     _require_editable(run)
     to_apply = [s for s in chosen_selections(run) if s.status in (SEL_APPROVED, SEL_FAILED) and s.approved_at]
+    if only_ids is not None:
+        to_apply = [s for s in to_apply if s.id in set(only_ids)]
     if not to_apply:
-        return {"applied": 0, "failed": 0, "results": [], "message": "Nothing approved to apply."}
+        return {"applied": 0, "failed": 0, "results": [], "message": "Nothing approved to add."}
     cart = await client.get_cart()
     by_product: dict[str, list[Selection]] = defaultdict(list)
     for sel in to_apply:
@@ -554,10 +562,13 @@ async def apply_approved(session: Session, client: PCExpressClient, run_id: str)
     results = []
     for rid, sels in by_product.items():
         before = cart.quantity_of(rid)
-        wanted = sum(s.quantity for s in sels)
+        # Count everything approved/in cart for this product in the run, not just this batch.
+        wanted = sum(s.quantity for s in chosen_selections(run)
+                     if s.product.retailer_product_id == rid and s.status in (SEL_APPROVED, SEL_FAILED, SEL_APPLIED))
         target = max(before, wanted)
         action = CartAction(shopping_run_id=run.id, selection_id=sels[0].id, product_id=sels[0].product_id, retailer_product_id=rid,
-                            action="set_quantity", quantity_before=before, quantity_after=target,
+                            product_label=product_label(sels[0].product), action="set_quantity", source=source,
+                            quantity_before=before, quantity_after=target,
                             price_at_action=sels[0].observation.effective_price if sels[0].observation else None,
                             upstream_reference=cart.cart_id)
         try:
@@ -567,33 +578,49 @@ async def apply_approved(session: Session, client: PCExpressClient, run_id: str)
             for s in sels:
                 s.status, s.applied_to_cart_at, s.last_error = SEL_APPLIED, utcnow(), None
             results.append({"product_id": rid, "name": sels[0].product.name, "quantity_before": before, "quantity_after": target, "ok": True})
-        except (RetailerError, Exception) as exc:  # noqa: BLE001 - record and continue with the rest
+        except Exception as exc:  # noqa: BLE001 - record and continue with the rest
             action.success, action.error = False, str(exc)[:500]
             for s in sels:
                 s.status, s.last_error = SEL_FAILED, str(exc)[:500]
-            results.append({"product_id": rid, "name": sels[0].product.name, "ok": False, "error": str(exc)[:200]})
+            results.append({"product_id": rid, "name": sels[0].product.name, "ok": False, "error": str(exc)[:300]})
             log.warning("cart apply failed run=%s product=%s: %s", run.id, rid, exc)
-            if "session" in str(exc).lower() or "AccessToken" in str(exc):
+            if "session" in str(exc).lower() or "unavailable" in str(exc).lower():
                 session.add(action)
-                break  # auth problem: stop rather than failing every item
+                break  # auth problem or retailer outage: stop rather than failing every item
         session.add(action)
         session.flush()
     recompute_run_status(run)
     ok = sum(1 for r in results if r["ok"])
-    return {"applied": ok, "failed": len(results) - ok, "results": results}
+    errors = [r["error"] for r in results if not r["ok"]]
+    return {"applied": ok, "failed": len(results) - ok, "results": results, "error": errors[0] if errors else None}
 
 
-async def user_set_cart_quantity(session: Session, client: PCExpressClient, product_id: str, quantity: float) -> None:
-    """Manual cart edit from the /cart page (user action), recorded in cart history."""
+def _product_from_cart_line(session: Session, line) -> Product:
+    """Products added on nofrills.ca may never have been searched here; record what the cart tells us."""
+    product = session.scalar(select(Product).where(Product.retailer_product_id == line.product_id))
+    if product is None:
+        product = Product(retailer_product_id=line.product_id, name=line.name or line.product_id, brand=line.brand)
+        session.add(product)
+        session.flush()
+    return product
+
+
+async def user_set_cart_quantity(session: Session, client: PCExpressClient, product_id: str, quantity: float, *,
+                                 source: str = "cart_page", selection: Selection | None = None):
+    """A user-initiated cart change, recorded in cart history. Returns the updated cart."""
     cart = await client.get_cart()
-    before = cart.quantity_of(product_id)
-    action = CartAction(retailer_product_id=product_id, action="remove" if quantity == 0 else "set_quantity",
-                        quantity_before=before, quantity_after=quantity, upstream_reference=cart.cart_id)
-    product = session.scalar(select(Product).where(Product.retailer_product_id == product_id))
-    action.product_id = product.id if product else None
+    line = next((l for l in cart.lines if l.product_id == product_id), None)
+    before = line.quantity if line else 0.0
+    product = _product_from_cart_line(session, line) if line else session.scalar(select(Product).where(Product.retailer_product_id == product_id))
+    action = CartAction(retailer_product_id=product_id, product_id=product.id if product else None, product_label=product_label(product),
+                        action="remove" if quantity == 0 else "set_quantity", source=source,
+                        quantity_before=before, quantity_after=quantity, upstream_reference=cart.cart_id,
+                        price_at_action=Decimal(str(line.unit_price)) if line and line.unit_price is not None else None,
+                        shopping_run_id=selection.shopping_run_id if selection else None, selection_id=selection.id if selection else None)
     try:
-        await client.set_cart_quantity(product_id, quantity)
+        cart = await client.set_cart_quantity(product_id, quantity)
         action.success = True
+        return cart
     except Exception as exc:  # noqa: BLE001
         action.error = str(exc)[:500]
         raise

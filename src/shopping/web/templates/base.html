@@ -14,8 +14,6 @@
     <a href="/" class="{{ 'on' if path == '/' or path.startswith('/runs') }}">Runs</a>
     <a href="/cart" class="{{ 'on' if path.startswith('/cart') }}">Cart</a>
     <a href="/history" class="{{ 'on' if path.startswith('/history') }}">History</a>
-    <a href="/feedback" class="{{ 'on' if path.startswith('/feedback') }}">Feedback</a>
-    <a href="/preferences" class="{{ 'on' if path.startswith('/preferences') }}">Preferences</a>
   </nav>
   <a class="auth-pill {{ auth.state }}" href="/auth">
     {% if auth.state == 'connected' %}● Connected · {{ (auth.seconds_remaining // 60) }} min{% else %}● {{ auth.label }}{% endif %}

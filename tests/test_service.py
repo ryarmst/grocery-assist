@@ -76,9 +76,10 @@ async def test_run_lifecycle_and_apply(session, client):
     actions = session.query(CartAction).all()
     assert {(a.retailer_product_id, a.quantity_before, a.quantity_after) for a in actions} == {(ids[0], 0, 1), (ids[2], 1, 2)}
 
-    # Re-applying is a no-op (run is final).
-    with pytest.raises(service.ShoppingError):
-        await service.apply_approved(session, client, run.id)
+    # Re-applying is a no-op.
+    again = await service.apply_approved(session, client, run.id)
+    assert again["applied"] == 0 and len(client.set_calls) == 2
+    assert {a.source for a in actions} == {"apply"} and all(a.product_label for a in actions)
 
 
 async def test_apply_never_lowers_cart_quantity(session, client):

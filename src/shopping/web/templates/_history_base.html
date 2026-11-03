@@ -1,0 +1,11 @@
+{% extends "base.html" %}
+{% block content %}
+<h1>History</h1>
+<nav class="tabs">
+  <a href="/history" class="{{ 'on' if tab == 'activity' }}">Activity</a>
+  <a href="/history/prices" class="{{ 'on' if tab == 'prices' }}">Products &amp; prices</a>
+  <a href="/history/feedback" class="{{ 'on' if tab == 'feedback' }}">Feedback &amp; patterns</a>
+  <a href="/history/rules" class="{{ 'on' if tab == 'rules' }}">Rules</a>
+</nav>
+{% block tab %}{% endblock %}
+{% endblock %}

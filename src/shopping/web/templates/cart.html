@@ -14,7 +14,8 @@
     <tbody>
     {% for l in cart.lines %}
     <tr>
-      <td>{{ l.brand or '' }} <a href="/history/{{ l.product_id }}">{{ l.name }}</a> <span class="muted small">{{ l.product_id }}</span></td>
+      <td>{{ l.brand or '' }} <a href="/history/{{ l.product_id }}">{{ l.name }}</a>
+        <div class="small muted">{% if origins.get(l.product_id) %}{{ origins[l.product_id].requirement or '' }} · from <a href="/runs/{{ origins[l.product_id].run_id }}">{{ origins[l.product_id].run }}</a>{% else %}added outside the app{% endif %}</div></td>
       <td class="num">
         <form method="post" action="/cart/{{ l.product_id }}" class="inline">
           <input type="number" name="quantity" value="{{ l.quantity | qty }}" min="0" step="any"><button class="link">Set</button>
@@ -22,11 +23,7 @@
       </td>
       <td class="num">{{ l.unit_price | money }}</td>
       <td class="num">{{ l.line_total | money }}{% if l.regular_line_total and l.line_total and l.regular_line_total > l.line_total %}<br><span class="muted small" style="text-decoration:line-through">{{ l.regular_line_total | money }}</span>{% endif %}</td>
-      <td>
-        <form method="post" action="/cart/{{ l.product_id }}" class="inline">
-          <input type="hidden" name="quantity" value="0"><button class="link danger">Remove</button>
-        </form>
-      </td>
+      <td><a class="btn" href="/cart/{{ l.product_id }}/modify">Modify…</a></td>
     </tr>
     {% endfor %}
     </tbody>

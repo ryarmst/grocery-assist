@@ -129,3 +129,22 @@ label.rule { display: inline-flex; gap: 6px; align-items: center; margin-top: 8p
 .progress .bar { height: 100%; background: var(--accent); }
 .card.pattern h3 { text-transform: none; letter-spacing: 0; font-size: 15px; color: var(--text); }
 a.badge { text-decoration: none; color: var(--muted); }
+
+/* tabs, events, modify */
+nav.tabs { display: flex; gap: 4px; flex-wrap: wrap; border-bottom: 1px solid var(--line); margin: 12px 0 14px; }
+nav.tabs a { padding: 8px 12px; text-decoration: none; color: var(--muted); border-bottom: 2px solid transparent; margin-bottom: -1px; }
+nav.tabs a.on { color: var(--text); border-bottom-color: var(--accent); font-weight: 600; }
+nav.tabs a.right { margin-left: auto; }
+.nowrap { white-space: nowrap; }
+.evk { font-size: 12px; font-weight: 600; padding: 2px 8px; border-radius: 999px; background: var(--chip); white-space: nowrap; }
+.evk.approved, .evk.cart { color: var(--accent); }
+.evk.removed { color: var(--bad); }
+.evk.swapped, .evk.rule { color: var(--badge-pref); }
+.evk.suggested { color: var(--badge-list); }
+tr.ev-fail .evk { color: var(--bad); }
+.inline-badges { display: inline-flex; margin: 0 0 0 6px; vertical-align: middle; }
+.card-title { margin: 0 0 8px; font-size: 15px; }
+.sale-text { color: var(--sale); }
+.status.applied { color: var(--accent); }
+table.events td:nth-child(3) { min-width: 240px; }
+table.events td:nth-child(4) { min-width: 200px; }

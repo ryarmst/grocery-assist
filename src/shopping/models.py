@@ -190,6 +190,8 @@ class Selection(Base):
     created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow)
     position: Mapped[int] = mapped_column(Integer, default=0)
     quantity: Mapped[float] = mapped_column(Float, default=1)
+    suggested_quantity: Mapped[float | None] = mapped_column(Float)  # what the agent proposed, before user edits
+    added_by: Mapped[str] = mapped_column(String(16), default="agent")  # agent | user
     status: Mapped[str] = mapped_column(String(16), default=SEL_PENDING, index=True)
     requirement: Mapped[str | None] = mapped_column(String(128))
     rationale: Mapped[str | None] = mapped_column(Text)
@@ -229,8 +231,10 @@ class CartAction(Base):
     selection_id: Mapped[str | None] = mapped_column(ForeignKey("selections.id"))
     product_id: Mapped[int | None] = mapped_column(ForeignKey("products.id"))
     retailer_product_id: Mapped[str] = mapped_column(String(64))
-    timestamp: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow)
+    product_label: Mapped[str | None] = mapped_column(String(256))  # brand + name + size at the time
+    timestamp: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow, index=True)
     action: Mapped[str] = mapped_column(String(32))  # set_quantity | remove
+    source: Mapped[str | None] = mapped_column(String(32))  # approve | apply | cart_page | modify | mcp
     quantity_before: Mapped[float | None] = mapped_column(Float)
     quantity_after: Mapped[float | None] = mapped_column(Float)
     price_at_action: Mapped[Decimal | None] = mapped_column(DecimalText)

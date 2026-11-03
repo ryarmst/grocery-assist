@@ -1,0 +1,25 @@
+{% macro events_table(events, show_product=True) %}
+{% if events %}
+<div class="table-wrap"><table class="events">
+  <thead><tr><th>When</th><th>What</th>{% if show_product %}<th>Item</th>{% endif %}<th>Details</th><th>Run</th></tr></thead>
+  <tbody>
+  {% for e in events %}
+  <tr class="ev-{{ e.kind }}{{ ' ev-fail' if e.ok is defined and not e.ok }}">
+    <td class="small nowrap">{{ e.time | local }}</td>
+    <td><span class="evk {{ e.kind }}">{{ e.title }}</span></td>
+    {% if show_product %}<td>{% if e.requirement %}<span class="small muted">{{ e.requirement }}</span><br>{% endif %}{% if e.product_id %}<a href="/history/{{ e.product_id }}">{{ e.product }}</a>{% else %}{{ e.product or '' }}{% endif %}</td>{% endif %}
+    <td class="small">
+      {{ e.detail or '' }}
+      {% if e.reasons %}<span class="badges inline-badges">{% for r in e.reasons %}<span class="badge {{ r }}">{{ REASON_CODES.get(r, r) }}</span>{% endfor %}</span>{% endif %}
+      {% if e.reasons_text %}<br><strong>Why:</strong> {{ e.reasons_text }}{% endif %}
+      {% if e.note %}<br><span class="muted">“{{ e.note }}”</span>{% endif %}
+    </td>
+    <td class="small">{% if e.run_id %}<a href="/runs/{{ e.run_id }}">{{ e.run or 'run' }}</a>{% endif %}</td>
+  </tr>
+  {% endfor %}
+  </tbody>
+</table></div>
+{% else %}
+<div class="empty">Nothing recorded yet.</div>
+{% endif %}
+{% endmacro %}

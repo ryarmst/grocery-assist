@@ -1,0 +1,125 @@
+{% extends "base.html" %}
+{% from "_events.html" import events_table with context %}
+{% block title %}Modify · {{ product.name }}{% endblock %}
+
+{% macro reason_block(group, title) %}
+  <div class="chip-group"><span class="chip-head">{{ title }}</span>
+    {% for code, label in FEEDBACK_TAGS[group].items() %}<label class="chip"><input type="checkbox" name="tags" value="{{ code }}"><span>{{ label }}</span></label>{% endfor %}
+    <label class="chip"><input type="checkbox" name="tags" value="other"><span>Other</span></label>
+  </div>
+{% endmacro %}
+
+{% block content %}
+<p class="small"><a href="{{ back }}">← Back</a></p>
+<div class="run-head">
+  <h1>{{ (sel.requirement if sel and sel.requirement) or product.name }}</h1>
+  <span class="status {{ 'applied' if cart_line else (sel.status if sel else '') }}">{{ state }}</span>
+</div>
+{% if cart_error %}<div class="flash err">{{ cart_error }}</div>{% endif %}
+
+<section class="card">
+  <div class="product">
+    {% if product.image_url %}<img src="{{ product.image_url }}" alt="">{% else %}<div></div>{% endif %}
+    <div>
+      <div class="brand">{{ product.brand or '' }}</div>
+      <div class="name"><a href="/history/{{ product.retailer_product_id }}">{{ product.name }}</a> <span class="muted">{{ product.raw_size or '' }}</span></div>
+      <div class="history-line">
+        {% if stats.days_observed and stats.days_observed > 1 %}Lowest seen <strong>{{ stats.min_price | money }}</strong> · 90-day avg {{ stats.avg_90d | money }}{% if stats.previous_price %} · previously {{ stats.previous_price | money }}{% endif %}{% else %}No earlier prices recorded.{% endif %}
+        {% if sel %} · from run <a href="/runs/{{ sel.shopping_run_id }}">{{ sel.run.summary }}</a>{% endif %}
+      </div>
+      {% if sel and sel.rationale %}<p class="rationale small">{{ sel.rationale }}</p>{% endif %}
+    </div>
+    <div class="price">
+      {% if current %}
+      <div class="now {{ 'sale' if current.sale_price }}">{{ current.effective_price | money }}</div>
+      {% if current.sale_price and current.regular_price %}<div class="was">{{ current.regular_price | money }}</div>{% endif %}
+      <div class="unit">{{ unit_price(current.unit_price, current.unit_price_basis) }}</div>
+      {% if current.deal_text %}<div class="small sale-text">{{ current.deal_text }}</div>{% endif %}
+      {% endif %}
+    </div>
+  </div>
+</section>
+
+<form method="post" action="/modify" id="modify-form">
+  <input type="hidden" name="product_id" value="{{ product.retailer_product_id }}">
+  <input type="hidden" name="selection_id" value="{{ sel.id if sel else '' }}">
+  <input type="hidden" name="back" value="{{ back }}">
+  <input type="hidden" name="in_cart" value="{{ '1' if cart_line else '' }}">
+
+  <section class="card">
+    <h2 class="card-title">Quantity</h2>
+    <div class="actions">
+      <label class="small muted">Qty <input type="number" name="quantity" value="{{ (cart_line.quantity if cart_line else (sel.quantity if sel else 1)) | qty }}" min="0.1" step="any"></label>
+      <button name="action" value="quantity">Update quantity</button>
+      <span class="small muted">Also used as the quantity when you swap.</span>
+    </div>
+  </section>
+
+  <section class="card">
+    <h2 class="card-title">Swap for a different product</h2>
+    {% if options %}
+    <div class="small muted">Other options the agent offered</div>
+    {% for o in options %}
+      <label class="option">
+        <span><input type="radio" name="new_product_id" value="{{ o.product.retailer_product_id }}">
+          <span class="oname">{{ o.product.brand or '' }} {{ o.product.name }} {{ o.product.raw_size or '' }}</span>
+          {% if o.rationale %}<span class="small muted block">{{ o.rationale }}</span>{% endif %}</span>
+        <span class="small num">{{ o.observation.effective_price | money if o.observation }}<br>
+          <span class="muted">{{ unit_price(o.observation.unit_price, o.observation.unit_price_basis) if o.observation }}</span></span>
+      </label>
+    {% endfor %}
+    {% endif %}
+    <div class="small muted" style="margin-top:10px">Search results for “{{ query }}” — cheapest per {{ {'weight': '100 g', 'volume': '100 mL', 'count': 'item'}.get(product.comparison_family, 'unit') }} first
+      (<a href="#search">search for something else</a>)</div>
+    {% if search_error %}<div class="error-line">{{ search_error }}</div>{% endif %}
+    {% for r in results %}{% set p = r.np %}
+      <label class="option">
+        <span><input type="radio" name="new_product_id" value="{{ p.retailer_product_id }}">
+          <span class="oname">{{ p.brand or '' }} {{ p.name }} {{ p.raw_size or '' }}</span>
+          {% if p.deal_text %}<span class="badge deal">{{ p.deal_text }}</span>{% endif %}
+          {% for f in r.flags %}<span class="badge pref">{{ f.replace('_', ' ') }}</span>{% endfor %}
+          {% if r.fb %}<span class="small warn-line block">You removed/passed over this before{% if r.fb.last_note %}: “{{ r.fb.last_note }}”{% endif %}</span>{% endif %}
+          {% if p.availability and p.availability != 'OK' %}<span class="small warn-line block">{{ p.availability }}</span>{% endif %}
+        </span>
+        <span class="small num">{{ p.effective_price | money }}{% if p.sale_price and p.regular_price %} <s class="muted">{{ p.regular_price | money }}</s>{% endif %}<br>
+          <span class="muted">{{ unit_price(p.unit_price, p.unit_price_basis) }}</span></span>
+      </label>
+    {% else %}{% if not search_error %}<p class="muted small">No results.</p>{% endif %}{% endfor %}
+    {{ reason_block('chose_alternative', 'Why swap? (optional)') }}
+    <div class="actions"><span class="spacer"></span><button class="primary" name="action" value="swap">Swap{{ ' in cart' if cart_line }}</button></div>
+  </section>
+
+  <section class="card">
+    <h2 class="card-title">Reasons, notes and rules</h2>
+    {{ reason_block('removed', 'Why remove? (optional)') }}
+    {{ reason_block('approved', 'Keeping it') }}
+    <textarea name="note" class="note" placeholder="In your words — saved with whichever button you press"></textarea>
+    <label class="small muted rule">Also make it a rule:
+      <select name="rule">
+        <option value="">— no rule —</option>
+        <option value="prefer_product">Prefer this product (or the one I swap to)</option>
+        <option value="prefer_brand">Prefer this brand (or the one I swap to)</option>
+        <option value="prefer_for_type">Use this (or the one I swap to) for “{{ (sel.requirement if sel and sel.requirement) or product.name }}”</option>
+        <option value="blacklist_product">Don't suggest this product again</option>
+        <option value="blacklist_brand">Don't suggest this brand again</option>
+      </select>
+    </label>
+    <div class="actions">
+      <span class="spacer"></span>
+      <button name="action" value="note">Save note only</button>
+      {% if cart_line or (sel and sel.status not in ('rejected',)) %}<button class="danger" name="action" value="remove">Remove{{ ' from cart' if cart_line }}</button>{% endif %}
+      {% if sel and sel.status == 'rejected' %}<button class="primary" name="action" value="restore">Add back</button>{% endif %}
+    </div>
+  </section>
+</form>
+
+<section class="card" id="search">
+  <form method="get" class="actions">
+    <input type="text" name="q" value="{{ query }}" placeholder="Search No Frills" style="flex:1">
+    <button>Search</button>
+  </form>
+</section>
+
+<h2>History for this product</h2>
+{{ events_table(events, show_product=False) }}
+{% endblock %}

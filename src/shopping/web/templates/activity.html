@@ -1,0 +1,22 @@
+{% extends "_history_base.html" %}
+{% from "_events.html" import events_table with context %}
+{% block title %}Activity · History{% endblock %}
+{% block tab %}
+{% if run %}<p class="flash ok">Showing activity for run <a href="/runs/{{ run.id }}">{{ run.summary }}</a> · <a href="/history">show everything</a></p>{% endif %}
+<form method="get" action="/history" class="form-grid">
+  {% if run %}<input type="hidden" name="run_id" value="{{ run.id }}">{% endif %}
+  <label>Show
+    <select name="kind">
+      <option value="">Everything</option>
+      {% for k, label in ACTIVITY_KINDS.items() %}<option value="{{ k }}" {{ 'selected' if kind == k }}>{{ label }}</option>{% endfor %}
+    </select>
+  </label>
+  <label>Item or note contains <input type="text" name="q" value="{{ q }}" placeholder="e.g. milk"></label>
+  <label>Period
+    <select name="days">{% for d in [7, 30, 90, 365] %}<option value="{{ d }}" {{ 'selected' if days == d }}>Last {{ d }} days</option>{% endfor %}</select>
+  </label>
+  <button>Filter</button>
+</form>
+<p class="muted small" style="margin-top:10px">{{ events | length }} events · newest first. Suggestions and decisions come from runs; cart changes include ones made from the Cart and Modify pages.</p>
+{{ events_table(events) }}
+{% endblock %}

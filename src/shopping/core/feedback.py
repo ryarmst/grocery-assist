@@ -58,7 +58,7 @@ def _product_label(p: Product | None) -> str | None:
     return " ".join(x for x in [p.brand, p.name, p.raw_size] if x)
 
 
-def _snapshot(sel: Selection) -> dict:
+def snapshot(sel: Selection) -> dict:
     obs = sel.observation
     return {
         "product_id": sel.product.retailer_product_id,
@@ -77,8 +77,12 @@ def _snapshot(sel: Selection) -> dict:
     }
 
 
-def _clean_tags(action: str, tags: list[str] | None) -> list[str]:
-    allowed = set(FEEDBACK_TAGS.get(action, {})) | {"other"}
+def allowed_tags(action: str) -> set[str]:
+    return set(FEEDBACK_TAGS.get(action, {})) | {"other"}
+
+
+def clean_tags(action: str, tags: list[str] | None) -> list[str]:
+    allowed = allowed_tags(action)
     tags = [t for t in dict.fromkeys(tags or []) if t]
     bad = [t for t in tags if t not in allowed]
     if bad:
@@ -86,7 +90,7 @@ def _clean_tags(action: str, tags: list[str] | None) -> list[str]:
     return tags
 
 
-def _make_rule(session: Session, rule: str, sel: Selection, product: Product) -> Preference:
+def make_rule(session: Session, rule: str, sel: Selection | None, product: Product) -> Preference:
     if rule not in RULE_KINDS:
         raise ShoppingError(f"Unknown rule {rule!r}")
     if rule in ("prefer_brand", "blacklist_brand"):
@@ -95,8 +99,9 @@ def _make_rule(session: Session, rule: str, sel: Selection, product: Product) ->
         target, label = product.brand, product.brand
     else:
         target, label = product.retailer_product_id, _product_label(product)
-    scope = None if rule.startswith("blacklist") else sel.requirement
-    return service.add_preference(session, kind=rule, scope=scope, target=target, target_label=label, source_selection_id=sel.id)
+    scope = None if rule.startswith("blacklist") else (sel.requirement if sel else product.name)
+    return service.add_preference(session, kind=rule, scope=scope, target=target, target_label=label,
+                                  source_selection_id=sel.id if sel else None)
 
 
 def triage(session: Session, selection_id: str, *, decision: str, chosen_selection_id: str | None = None,
@@ -112,7 +117,7 @@ def triage(session: Session, selection_id: str, *, decision: str, chosen_selecti
         raise ShoppingError(f"No selection {selection_id!r}")
     note = (note or "").strip() or None
     rule = rule or None
-    before = _snapshot(sel)
+    before = snapshot(sel)
     fb: Feedback | None = None
 
     if decision == "choose":
@@ -126,34 +131,34 @@ def triage(session: Session, selection_id: str, *, decision: str, chosen_selecti
                 service.user_set_selection_quantity(session, chosen.id, quantity)
             service.choose_alternative(session, sel.choice_group_id, chosen.id)
             service.decide_selection(session, chosen.id, approve=True)
-            fb = Feedback(action="chose_alternative", tags=_clean_tags("chose_alternative", tags), note=note,
+            fb = Feedback(action="chose_alternative", tags=clean_tags("chose_alternative", tags), note=note,
                           product_id=sel.product_id, chosen_product_id=chosen.product_id,
-                          context=json.dumps({"from": before, "to": _snapshot(chosen),
+                          context=json.dumps({"from": before, "to": snapshot(chosen),
                                               "recommended_selection_id": sel.choice_group.recommended_selection_id}))
             if rule:
                 # Prefer-rules point at the chosen product; blacklist-rules at the one passed over.
                 target_sel = sel if rule.startswith("blacklist") else chosen
-                fb.preference_id = _make_rule(session, rule, target_sel, target_sel.product).id
+                fb.preference_id = make_rule(session, rule, target_sel, target_sel.product).id
 
     if decision == "keep":
         changed_qty = quantity is not None and quantity != sel.quantity
         if changed_qty:
             service.user_set_selection_quantity(session, sel.id, quantity)
         service.decide_selection(session, sel.id, approve=True)
-        clean = _clean_tags("approved", tags)
+        clean = clean_tags("approved", tags)
         if clean or note or rule or changed_qty:
             fb = Feedback(action="quantity_changed" if changed_qty and not (clean or note) else "approved", tags=clean, note=note,
                           product_id=sel.product_id,
                           context=json.dumps({"from": before, "quantity_to": quantity if changed_qty else None}))
             if rule:
-                fb.preference_id = _make_rule(session, rule, sel, sel.product).id
+                fb.preference_id = make_rule(session, rule, sel, sel.product).id
 
     elif decision == "remove":
         service.decide_selection(session, sel.id, approve=False)
-        fb = Feedback(action="removed", tags=_clean_tags("removed", tags), note=note, product_id=sel.product_id,
+        fb = Feedback(action="removed", tags=clean_tags("removed", tags), note=note, product_id=sel.product_id,
                       context=json.dumps({"from": before}))
         if rule:
-            fb.preference_id = _make_rule(session, rule, sel, sel.product).id
+            fb.preference_id = make_rule(session, rule, sel, sel.product).id
 
     elif decision != "choose":
         raise ShoppingError(f"Unknown decision {decision!r}")

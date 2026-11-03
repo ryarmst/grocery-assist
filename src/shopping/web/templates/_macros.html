@@ -38,7 +38,7 @@
     <span id="card-{{ sel.id }}"></span>
     <div class="req">
       <h3>{{ card.group.label if card.kind == 'group' else (sel.requirement or m.p.name) }}</h3>
-      <span class="status {{ sel.status }}">{{ sel.status }}</span>
+      <span class="status {{ sel.status }}">{{ sel.status | status_label }}</span>
     </div>
 
     <div class="product">
@@ -55,7 +55,7 @@
     {% if sel.last_error and sel.status == 'failed' %}<div class="error-line">Cart update failed: {{ sel.last_error }}</div>{% endif %}
     {% for f in card.feedback %}<div class="fb-line">✎ {{ f.action.replace('_', ' ') }}{% if f.tag_labels %} — {{ f.tag_labels | join(', ') }}{% endif %}{% if f.note %}: “{{ f.note }}”{% endif %}</div>{% endfor %}
 
-    {% if editable and sel.status != 'applied' %}
+    {% if editable and sel.status == 'pending' %}
     <form method="post" action="/runs/{{ run.id }}/selections/{{ sel.id }}/triage" class="triage-form">
       <input type="hidden" name="return_to" value="{{ mode }}">
       {% if mode == 'triage' %}<input type="hidden" name="skipped" value="{{ skipped | default('') }}">{% endif %}
@@ -110,11 +110,26 @@
         <span class="spacer"></span>
         {% if mode == 'triage' %}<a class="btn" href="/runs/{{ run.id }}/triage?skipped={{ ((skipped | default('')) ~ ',' ~ sel.id) | urlencode }}">Skip</a>{% endif %}
         <button class="danger" name="decision" value="remove">Remove</button>
-        <button class="primary" name="decision" value="keep">Approve{{ ' & next' if mode == 'triage' }}</button>
+        <button class="primary" name="decision" value="keep">{{ 'Approve & add to cart' if auth.state == 'connected' else 'Approve' }}{{ ' →' if mode == 'triage' }}</button>
       </div>
     </form>
     {% else %}
-    <div class="actions small muted">Quantity {{ sel.quantity | qty }}{% if sel.applied_to_cart_at %} · added to cart {{ sel.applied_to_cart_at | local }}{% endif %}</div>
+    <div class="actions">
+      <span class="small muted">Qty {{ sel.quantity | qty }}{% if sel.suggested_quantity and sel.suggested_quantity != sel.quantity %} (suggested {{ sel.suggested_quantity | qty }}){% endif %}
+        {% if sel.applied_to_cart_at and sel.status == 'applied' %} · added to cart {{ sel.applied_to_cart_at | local }}{% endif %}
+        {% if sel.added_by == 'user' %} · added by you{% endif %}</span>
+      <span class="spacer"></span>
+      {% if editable %}
+        {% if sel.status == 'rejected' %}
+        <form class="inline" method="post" action="/modify">
+          <input type="hidden" name="action" value="restore"><input type="hidden" name="product_id" value="{{ m.p.retailer_product_id }}">
+          <input type="hidden" name="selection_id" value="{{ sel.id }}"><input type="hidden" name="back" value="/runs/{{ run.id }}#card-{{ sel.id }}">
+          <button>Add back</button>
+        </form>
+        {% endif %}
+        <a class="btn" href="/runs/{{ run.id }}/selections/{{ sel.id }}/modify">Modify…</a>
+      {% endif %}
+    </div>
     {% endif %}
   </section>
 {% endmacro %}

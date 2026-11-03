@@ -1,8 +1,7 @@
-{% extends "base.html" %}
+{% extends "_history_base.html" %}
 {% block title %}Price history{% endblock %}
-{% block content %}
-<h1>Product &amp; price history</h1>
-<form method="get" action="/history" style="margin:10px 0 14px">
+{% block tab %}
+<form method="get" action="/history/prices" style="margin:10px 0 14px">
   <input type="text" name="q" value="{{ q }}" placeholder="Filter by name or brand">
   <button>Filter</button>
 </form>

@@ -1,18 +1,20 @@
 {% extends "base.html" %}
 {% block content %}
 <h1>Shopping runs</h1>
-<p class="muted small">Runs are created by the shopping agent. Open one to review, approve and send items to the cart. Store {{ store_id }}.</p>
+<p class="muted small">Runs are created by the shopping agent. Open one to triage it — approving an item puts it straight in your cart. Store {{ store_id }}.</p>
 {% if rows %}
 <div class="table-wrap"><table>
-  <thead><tr><th>Created</th><th>Run</th><th>Status</th><th class="num">Items</th><th class="num">Pending</th><th class="num">Est. total</th></tr></thead>
+  <thead><tr><th>Created</th><th>Run</th><th>Status</th><th class="num">Items</th><th class="num">Pending</th><th class="num">In cart</th><th class="num">Removed</th><th class="num">Est. total</th></tr></thead>
   <tbody>
   {% for r in rows %}
     <tr>
       <td class="small">{{ r.run.created_at | local }}</td>
       <td><a href="/runs/{{ r.run.id }}">{{ r.run.summary }}</a></td>
-      <td><span class="status {{ r.run.status }}">{{ r.run.status.replace('_', ' ') }}</span></td>
-      <td class="num">{{ r.items }}</td>
-      <td class="num">{{ r.pending or '' }}</td>
+      <td><span class="status {{ r.run.status }}">{{ r.run.status | status_label }}</span></td>
+      <td class="num">{{ r.item_count }}</td>
+      <td class="num">{% if r.counts.get('pending') %}<a href="/runs/{{ r.run.id }}?show=pending">{{ r.counts.get('pending') }}</a>{% endif %}</td>
+      <td class="num">{% if r.counts.get('applied') %}<a href="/runs/{{ r.run.id }}?show=applied">{{ r.counts.get('applied') }}</a>{% endif %}</td>
+      <td class="num">{% if r.counts.get('rejected') %}<a href="/runs/{{ r.run.id }}?show=rejected">{{ r.counts.get('rejected') }}</a>{% endif %}</td>
       <td class="num">{{ r.total | money }}</td>
     </tr>
   {% endfor %}

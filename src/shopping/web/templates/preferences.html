@@ -1,7 +1,6 @@
-{% extends "base.html" %}
+{% extends "_history_base.html" %}
 {% block title %}Preferences{% endblock %}
-{% block content %}
-<h1>Shopping preferences</h1>
+{% block tab %}
 <p class="muted small">The agent reads these before shopping. “Don't suggest” rules are absolute; everything else is guidance.
 Most preferences are created from the review page.</p>
 
@@ -19,7 +18,7 @@ Most preferences are created from the review page.</p>
 </form>
 
 <h2>{{ 'All' if show_inactive else 'Active' }} preferences
-  <a class="small" href="/preferences{{ '' if show_inactive else '?show_inactive=true' }}">{{ 'hide inactive' if show_inactive else 'show inactive' }}</a></h2>
+  <a class="small" href="/history/rules{{ '' if show_inactive else '?show_inactive=true' }}">{{ 'hide inactive' if show_inactive else 'show inactive' }}</a></h2>
 {% if prefs %}
 <div class="table-wrap"><table>
   <thead><tr><th>Rule</th><th>Target</th><th>Applies to / note</th><th>Created</th><th></th></tr></thead>

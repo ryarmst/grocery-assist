@@ -1,7 +1,6 @@
-{% extends "base.html" %}
+{% extends "_history_base.html" %}
 {% block title %}Feedback{% endblock %}
-{% block content %}
-<h1>Feedback</h1>
+{% block tab %}
 <p class="muted small">Every remove or swap you make during review, with your reasons. Look here for patterns worth turning into
 rules, app features, or changes to the shopping skill. The agent can read these too (<code>shopping_get_feedback</code>).</p>
 
@@ -30,7 +29,7 @@ rules, app features, or changes to the shopping skill. The agent can read these 
       {% else %}
       <span class="small muted">Not a rule — handle in the skill/app (e.g. suggest this less often). Mark reviewed below once handled.</span>
       {% endif %}
-      <a class="small" href="/feedback?ids={{ p.feedback_ids | join(',') }}">Show records</a>
+      <a class="small" href="/history/feedback?ids={{ p.feedback_ids | join(',') }}">Show records</a>
     </div>
   </div>
   {% endfor %}
@@ -40,11 +39,11 @@ rules, app features, or changes to the shopping skill. The agent can read these 
 
 {% if summary.by_tag_code %}
 <h2>Reasons used</h2>
-<div class="badges">{% for code, n in summary.by_tag_code.items() %}<a class="badge" href="/feedback?tag={{ code }}">{{ FEEDBACK_TAG_LABELS.get(code, code) }} · {{ n }}</a>{% endfor %}</div>
+<div class="badges">{% for code, n in summary.by_tag_code.items() %}<a class="badge" href="/history/feedback?tag={{ code }}">{{ FEEDBACK_TAG_LABELS.get(code, code) }} · {{ n }}</a>{% endfor %}</div>
 {% endif %}
 
 <h2>Records</h2>
-<form method="get" action="/feedback" class="form-grid">
+<form method="get" action="/history/feedback" class="form-grid">
   <label>Action
     <select name="action">
       <option value="">Any</option>

@@ -91,19 +91,33 @@ Check everything end to end (creates a small test run, doesn't touch the cart):
 ## Review workflow
 
 The agent creates a run and stages items → you open the review URL. Items are grouped into
-*From the grocery list*, *Regular purchases* and *Deals & extras*. Either work down the page or press
-**Triage** to go through pending items one at a time.
+*From the grocery list*, *Regular purchases* and *Deals & extras*, with filter tabs for Pending / In cart /
+Removed. Either work down the page or press **Triage** to go through pending items one at a time.
 
-For each item: pick an option (for choice groups) and **Approve**, or **Remove**. Open **Why?** to add
-reason chips (“have enough”, “wrong size”, “better unit price”…) and a note in your own words, and
-optionally turn the decision into a rule (prefer this product/brand, use this for “milk”, don't suggest
-this product/brand). **Approve all current** only covers items that were on screen when you loaded the
-page. **Apply approved to cart** raises each product's cart quantity to the approved amount; it never
-lowers it or double-adds on retry. Every cart change is logged in `cart_actions`.
+For each item: pick an option (for choice groups) and **Approve**, or **Remove**. **Approving puts the
+item in your cart immediately** (when your session is connected); **Approve all & add to cart** does the
+same for every pending item on screen — items the agent adds after you loaded the page stay pending.
+Open **Why?** to add reason chips (“have enough”, “wrong size”, “better unit price”…) and a note, and
+optionally turn the decision into a rule. Cart quantities are only ever raised to the approved amount,
+never double-added on retry; if No Frills has an outage the item shows *Cart error* and an
+**Add N approved to cart** button retries.
+
+### Modify
+
+Every cart line and every decided run item has **Modify…**: one page to change the quantity, swap to
+another product (the agent's other options plus a live search sorted by unit price), remove it, or just
+leave a note — each with optional reasons and a rule. Removed run items can be **added back**.
+
+### History
+
+*History* has four tabs: **Activity** (one timeline of suggestions, approvals, removals, swaps, cart
+changes with their source, notes and rules — filterable by type, item, period or run), **Products &
+prices**, **Feedback & patterns** and **Rules**. Each product page shows its observed prices and
+everything that happened with it.
 
 ### Feedback
 
-`/feedback` collects every remove/swap with its reasons. It counts reasons, flags repeated patterns
+*History → Feedback & patterns* collects every remove/swap with its reasons. It counts reasons, flags repeated patterns
 (e.g. the same product removed twice as disliked → suggest a blacklist; the same alternative picked
 twice → suggest "use this for <item>"; an item removed repeatedly as "have enough" → suggested too
 often) with a one-click **Create this rule**, and lets you mark records reviewed with a note on what you

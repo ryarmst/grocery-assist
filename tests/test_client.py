@@ -28,7 +28,7 @@ def make_client(tmp_path, handler) -> tuple[PCExpressClient, AuthSession]:
 def test_no_generic_request_surface():
     public = [n for n in dir(PCExpressClient) if not n.startswith("_")]
     assert sorted(public) == sorted(
-        ["MIN_INTERVAL_SECONDS", "aclose", "get_cart", "get_deals", "get_product", "remove_cart_item", "search_products", "set_cart_quantity"]
+        ["MIN_INTERVAL_SECONDS", "RETRY_DELAYS", "aclose", "get_cart", "get_deals", "get_product", "remove_cart_item", "search_products", "set_cart_quantity"]
     )
 
 
@@ -113,3 +113,64 @@ def test_auth_session_states(tmp_path):
         auth.set_access_token("not-a-token")
     auth.set_access_token(fake_jwt(exp_in=30))  # within the skew window
     assert auth.status().state == "expired"
+
+
+def _ppe_error(status=526):
+    inner = json.dumps({"error_response": {"message": "Unexpected error from PPE", "details": {"error": ":unavailable", "status": status},
+                                           "error_code": "PRICING_PROMO_ENGINE_ERROR"}})
+    return httpx.Response(400, json={"errors": [{"message": inner}]})
+
+
+async def test_upstream_outage_is_retried_then_reported_readably(tmp_path):
+    calls = []
+
+    def handler(request):
+        if request.method == "GET":
+            return httpx.Response(200, json={"carts": [{"id": "c"}]})
+        calls.append(1)
+        return _ppe_error()
+
+    client, auth = make_client(tmp_path, handler)
+    client.RETRY_DELAYS = (0, 0, 0)
+    auth.set_access_token(fake_jwt())
+    from shopping.retailer.client import RetailerUnavailable
+
+    with pytest.raises(RetailerUnavailable, match="pricing service is unavailable") as exc:
+        await client.set_cart_quantity("x_EA", 1)
+    assert len(calls) == 3 and exc.value.code == "PRICING_PROMO_ENGINE_ERROR"
+    assert "{" not in str(exc.value)  # no raw JSON in the message
+
+
+async def test_transient_error_then_success(tmp_path):
+    calls = []
+
+    def handler(request):
+        if request.method == "GET":
+            return httpx.Response(200, json={"carts": [{"id": "c"}]})
+        calls.append(1)
+        return _ppe_error() if len(calls) == 1 else httpx.Response(200, json=load_fixture("cart_update.json"))
+
+    client, auth = make_client(tmp_path, handler)
+    client.RETRY_DELAYS = (0, 0, 0)
+    auth.set_access_token(fake_jwt())
+    cart = await client.set_cart_quantity("20296401_EA", 2)
+    assert cart.lines and len(calls) == 2
+
+
+async def test_cart_cache_is_per_customer(tmp_path):
+    seen = []
+
+    def handler(request):
+        if request.url.path.endswith("/carts"):
+            seen.append(request.url.path)
+            cid = "cart-a" if "/customer-a/" in request.url.path else "cart-b"
+            return httpx.Response(200, json={"carts": [{"id": cid}]})
+        return httpx.Response(200, json=load_fixture("cart_empty.json"))
+
+    client, auth = make_client(tmp_path, handler)
+    auth.set_access_token(fake_jwt(sub="customer-a"))
+    assert await client._current_cart_id() == "cart-a"  # noqa: SLF001
+    assert await client._current_cart_id() == "cart-a"  # noqa: SLF001 - cached
+    auth.set_access_token(fake_jwt(sub="customer-b"))
+    assert await client._current_cart_id() == "cart-b"  # noqa: SLF001
+    assert len(seen) == 2

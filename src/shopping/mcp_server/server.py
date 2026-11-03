@@ -35,7 +35,8 @@ Grocery shopping assistant for No Frills (store {settings.store_id}). Workflow:
    For regular purchases, check shopping_get_requirement_history first and only stage items that are due.
 3. shopping_submit_run_for_review and give the user the review URL. The user triages items in the web UI,
    often recording why they removed or swapped something; read shopping_get_feedback to learn from it.
-4. Only after the user approves, shopping_apply_approved may push approved items into the cart.
+4. Approving an item in the web UI adds it to the cart immediately. shopping_apply_approved only retries
+   approved items that couldn't be added (e.g. the session had expired); never use it on unapproved items.
 This service cannot check out or place orders; the user completes purchases themselves.
 Blacklist preferences are absolute; other preferences are guidance.
 """

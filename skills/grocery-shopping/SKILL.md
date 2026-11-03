@@ -89,16 +89,19 @@ means compare unit prices: same price for a smaller pack is a price increase.
 Reply with the `review_url`, the estimated total, then short lines: notable deals, choice groups
 waiting on Ryan, anything not found, regular items skipped as not due. The review page groups items
 into *From the grocery list*, *Regular purchases*, and *Deals & extras*; **Triage** walks through
-them one at a time, and each remove/swap can carry reason chips and a note.
+them one at a time. Approving an item (or *Approve all*) puts it straight into the cart. Each
+remove/swap can carry reason chips and a note, and every cart line has a **Modify** page for later
+swaps, quantity changes, removals and notes.
 
 ### 7. After review
 
 - `shopping_get_run` returns `user_feedback` for this run. If Ryan removed a grocery-list item as
   "have enough / not needed", offer in one line to mark that Groceries row `Status` = Skipped; write
   only on confirmation.
-- Applying to the cart is Ryan's button in the web UI. Call `shopping_apply_approved` only if he
-  explicitly asks you to. On an auth error, point him to the `/auth` page (`shopping_auth_status`
-  gives the URL) — never ask for tokens in chat.
+- Approval adds items to the cart. If some approved items show a cart error (e.g. the session
+  expired or No Frills had an outage), call `shopping_apply_approved` only when Ryan asks you to
+  retry. On an auth error, point him to the `/auth` page (`shopping_auth_status` gives the URL) —
+  never ask for tokens in chat.
 - Only after Ryan says the order is placed: offer to mark the covered Groceries rows `Purchased` with
   today's `Purchase Date`. Inventory expiry updates come from the receipt via the meal-planner skill.
 

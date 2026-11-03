@@ -5,14 +5,20 @@
 {% block content %}
 <div class="run-head">
   <h1>{{ run.summary }}</h1>
-  <span class="status {{ run.status }}">{{ run.status.replace('_', ' ') }}</span>
+  <span class="status {{ run.status }}">{{ run.status | status_label }}</span>
   {% if editable and counts.get('pending') %}<a class="btn primary" href="/runs/{{ run.id }}/triage">Triage {{ counts.get('pending') }} pending →</a>{% endif %}
 </div>
-<p class="muted small">Created {{ run.created_at | local }} · Store {{ run.store_id }}
-  {% for k, v in counts.items() %} · {{ v }} {{ k }}{% endfor %}</p>
+<p class="muted small">Created {{ run.created_at | local }} · Store {{ run.store_id }}</p>
 {% if run.notes %}<p class="small">{{ run.notes }}</p>{% endif %}
+<nav class="tabs">
+  {% for key, label in filters %}
+    {% set n = (counts.values() | sum) if key == 'all' else counts.get(key, 0) %}
+    {% if key == 'all' or n %}<a href="/runs/{{ run.id }}{{ '' if key == 'all' else '?show=' ~ key }}" class="{{ 'on' if show == key }}">{{ label }} <span class="muted">{{ n }}</span></a>{% endif %}
+  {% endfor %}
+  <a href="/history?run_id={{ run.id }}&days=365" class="right small">Run activity →</a>
+</nav>
 
-{% if not cards %}<div class="empty">The agent hasn't added anything to this run yet.</div>{% endif %}
+{% if not cards %}<div class="empty">{{ "Nothing in this view." if show != 'all' else "The agent hasn't added anything to this run yet." }}</div>{% endif %}
 
 {% for key, title, section_cards in sections %}
   {% if section_cards %}
@@ -22,20 +28,24 @@
 {% endfor %}
 
 <div class="bottom-bar"><div class="inner">
-  <div class="total">{{ total | money }} <span>estimated (excl. tax)</span></div>
+  <div class="total">{{ total | money }} <span>estimated (excl. tax) · {{ counts.get('applied', 0) }} in cart</span></div>
   {% if editable %}
+  {% set waiting = counts.get('approved', 0) + counts.get('failed', 0) %}
+  {% if counts.get('pending') %}
   <form class="inline" method="post" action="/runs/{{ run.id }}/reject-remaining">
-    <input type="hidden" name="snapshot" value="{{ snapshot }}"><button class="danger" {{ 'disabled' if not counts.get('pending') }}>Reject remaining</button>
+    <input type="hidden" name="snapshot" value="{{ snapshot }}"><button class="danger">Remove all pending</button>
   </form>
   <form class="inline" method="post" action="/runs/{{ run.id }}/approve-all">
-    <input type="hidden" name="snapshot" value="{{ snapshot }}"><button {{ 'disabled' if not counts.get('pending') }}>Approve all current</button>
+    <input type="hidden" name="snapshot" value="{{ snapshot }}">
+    <button class="primary">Approve all {{ counts.get('pending') }}{{ ' & add to cart' if auth.state == 'connected' }}</button>
   </form>
-  {% if auth.state == 'connected' %}
-  <form class="inline" method="post" action="/runs/{{ run.id }}/apply">
-    <button class="primary" {{ 'disabled' if not (counts.get('approved') or counts.get('failed')) }}>Apply approved to cart</button>
-  </form>
-  {% else %}
-  <a class="btn" href="/auth">Connect session to apply</a>
+  {% endif %}
+  {% if waiting %}
+    {% if auth.state == 'connected' %}
+    <form class="inline" method="post" action="/runs/{{ run.id }}/apply"><button class="{{ '' if counts.get('pending') else 'primary' }}">Add {{ waiting }} approved to cart</button></form>
+    {% else %}
+    <a class="btn" href="/auth">Connect session to add {{ waiting }} to cart</a>
+    {% endif %}
   {% endif %}
   {% endif %}
 </div></div>
