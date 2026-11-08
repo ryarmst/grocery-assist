@@ -26,7 +26,7 @@ Replace the `Regular Purchase?` meaning with:
 
 Add directly under the table:
 
-> **Shopping Preferences format** (shared with the grocery-shopping skill): one fact per line, newest last, at most ~6 lines, each starting with `Prefer:` (brand/product/variety), `Avoid:` (don't buy — firm), `Size:` (package or format), `Buy when:` (conditions, price thresholds) or `Note:`. A line may end with a month tag like `[2026-11]`. Newer lines win over contradicting older ones. Example:
+> **Shopping Preferences format** (shared with the grocery-shopping skill): one fact per line, newest last, at most ~6 lines, each starting with `Prefer:` (brand/product/variety), `Avoid:` (don't buy — firm), `Size:` (package or format), `Buy when:` (conditions, price thresholds) or `Note:`. A line may end with a month tag like `[2026-11]`. Newer lines win over contradicting older ones. Ryan may also write free text without a prefix ("2% bags", "Bulk, good prices preferred"): read it the same way and keep his lines verbatim when merging. Example:
 >
 > ```
 > Prefer: sourdough or Italian loaf

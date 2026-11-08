@@ -47,7 +47,8 @@ doesn't track stock levels; treat its rows as hints. Ryan's message beats Notion
   Prefixes: `Prefer:` (brand/product/variety to choose), `Avoid:` (don't stage — treat as firm),
   `Size:` (package/format), `Buy when:` (conditions, price thresholds), `Note:` (anything else).
   A line may end with a month tag like `[2026-11]` when timing matters. Newer lines win over older
-  contradicting ones.
+  contradicting ones. Ryan also writes free text without a prefix ("2% bags", "Bulk, good prices
+  preferred"): read it the same way, and keep his lines verbatim when merging — never reformat them.
 
   The app's own rules (`shopping_get_preferences`: prefer/blacklist a specific product or brand) are
   the machine-readable twin of these lines. Use both; if they conflict, the newer one wins and you
