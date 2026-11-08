@@ -87,6 +87,7 @@ async def modify(session: Session, client: PCExpressClient, *, action: str, prod
     if action == "quantity":
         if quantity is None or quantity <= 0:
             raise ShoppingError("Enter a quantity above zero (or use Remove).")
+        quantity = service.whole_quantity(quantity, product.sold_by if product else None)
         if sel:
             sel.quantity = quantity
         if in_cart:

@@ -83,7 +83,8 @@ Check everything end to end (creates a small test run, doesn't touch the cart):
 | `shopping_submit_run_for_review` | Hand the run to you; returns the review URL |
 | `shopping_get_preferences` / `shopping_add_preference_note` | Preferences |
 | `shopping_get_product_history` / `shopping_get_selection_history` / `shopping_get_recent_price_history` | History |
-| `shopping_get_feedback` | What you removed/swapped during review and why, plus detected patterns |
+| `shopping_get_feedback` | What you removed/swapped during review and why, plus detected patterns (`unreviewed_only` for new records) |
+| `shopping_mark_feedback_reviewed` | Mark feedback as handled (e.g. after the skill saves it to Notion's Shopping Preferences) |
 | `shopping_get_requirement_history` | Per item: last bought, typical interval, recently skipped, due / not due (for regular purchases) |
 | `shopping_apply_approved` | Add **user-approved** items to the cart |
 | `shopping_auth_status` | Whether the retailer session is connected (no secrets) |

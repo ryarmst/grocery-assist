@@ -18,7 +18,7 @@
         <div class="small muted">{% if origins.get(l.product_id) %}{{ origins[l.product_id].requirement or '' }} · from <a href="/runs/{{ origins[l.product_id].run_id }}">{{ origins[l.product_id].run }}</a>{% else %}added outside the app{% endif %}</div></td>
       <td class="num">
         <form method="post" action="/cart/{{ l.product_id }}" class="inline">
-          <input type="number" name="quantity" value="{{ l.quantity | qty }}" min="0" step="any"><button class="link">Set</button>
+          <input type="number" name="quantity" value="{{ l.quantity | qty }}" min="0" step="{{ 'any' if l.selling_type == 'SOLD_BY_WEIGHT' else '1' }}"><button class="link">Set</button>
         </form>
       </td>
       <td class="num">{{ l.unit_price | money }}</td>

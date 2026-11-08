@@ -46,6 +46,16 @@ class ShoppingError(Exception):
     pass
 
 
+def whole_quantity(quantity: float, sold_by: str | None, *, allow_zero: bool = False) -> float:
+    """Packaged items (everything not sold by weight) take whole-number quantities."""
+    q = float(quantity)
+    if q < 0 or (q == 0 and not allow_zero):
+        raise ShoppingError("Quantity must be above zero.")
+    if sold_by != "weight" and abs(q - round(q)) > 1e-9:
+        raise ShoppingError(f"Quantity {q:g} isn't a whole number; this item is sold by the package.")
+    return q if sold_by == "weight" else float(round(q))
+
+
 def _local_day(dt: datetime) -> str:
     return dt.astimezone(LOCAL_TZ).date().isoformat()
 
@@ -299,6 +309,7 @@ async def _stage_selection(session: Session, client: PCExpressClient, run: Shopp
             f"{np.brand or ''} {np.name} is blacklisted by preference #{hit.id} ({hit.kind}). "
             "Choose another product (or include reason 'user_requested' if the user explicitly asked for it)."
         )
+    quantity = whole_quantity(quantity, np.sold_by)
     if np.max_quantity and quantity > np.max_quantity:
         raise ShoppingError(f"Quantity {quantity} exceeds the retailer maximum of {np.max_quantity}.")
     obs = record_observation(session, np, source="selection", store_id=run.store_id, run_id=run.id, dedupe=False)
@@ -366,7 +377,7 @@ def update_selection(session: Session, selection_id: str, *, quantity: float | N
     if quantity is not None:
         if quantity <= 0:
             raise ShoppingError("Quantity must be positive (use withdraw=true to remove a suggestion).")
-        sel.quantity = quantity
+        sel.quantity = whole_quantity(quantity, sel.product.sold_by)
     if rationale is not None:
         sel.rationale = rationale
     if reasons is not None:
@@ -478,7 +489,7 @@ def user_set_selection_quantity(session: Session, selection_id: str, quantity: f
         raise ShoppingError("Already in the cart; change the quantity on the Cart page.")
     if quantity <= 0:
         raise ShoppingError("Quantity must be positive; reject the item instead.")
-    sel.quantity = quantity
+    sel.quantity = whole_quantity(quantity, sel.product.sold_by)
     session.flush()
     return sel
 
@@ -610,6 +621,7 @@ async def user_set_cart_quantity(session: Session, client: PCExpressClient, prod
     """A user-initiated cart change, recorded in cart history. Returns the updated cart."""
     cart = await client.get_cart()
     line = next((l for l in cart.lines if l.product_id == product_id), None)
+    quantity = whole_quantity(quantity, "weight" if line and line.selling_type == "SOLD_BY_WEIGHT" else "each", allow_zero=True)
     before = line.quantity if line else 0.0
     product = _product_from_cart_line(session, line) if line else session.scalar(select(Product).where(Product.retailer_product_id == product_id))
     action = CartAction(retailer_product_id=product_id, product_id=product.id if product else None, product_label=product_label(product),

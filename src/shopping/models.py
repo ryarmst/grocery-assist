@@ -254,7 +254,7 @@ FEEDBACK_TAGS = {
         "dislike_product": "Don't like this product",
         "dislike_brand": "Don't like this brand",
         "quality": "Quality concern",
-        "buy_elsewhere": "Buying elsewhere",
+        "buy_elsewhere": "Buy at Costco / elsewhere",
     },
     "chose_alternative": {
         "cheaper": "Cheaper",

@@ -157,3 +157,13 @@ def test_price_stats_history(session):
     assert s["is_lowest_observed"] is True and s["vs_avg_90d_pct"] < 0
     brief = service.history_brief(session, [p.retailer_product_id], "3728")
     assert brief[p.retailer_product_id]["days_observed"] == 3
+
+
+async def test_packaged_items_take_whole_quantities(session, client):
+    run, group, single, ids = await build_run(session, client)
+    with pytest.raises(service.ShoppingError, match="whole number"):
+        service.user_set_selection_quantity(session, single.id, 1.1)
+    assert service.user_set_selection_quantity(session, single.id, 3.0).quantity == 3
+    with pytest.raises(service.ShoppingError, match="whole number"):
+        await service.add_selection(session, client, run.id, product_id=ids[4], quantity=0.5, reasons=["grocery_list"])
+    assert service.whole_quantity(0.25, "weight") == 0.25  # sold-by-weight items may be fractional

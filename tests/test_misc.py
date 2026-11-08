@@ -1,5 +1,7 @@
 import logging
 
+import pytest
+
 from sqlalchemy import create_engine, inspect
 
 from shopping.logging_setup import RedactingFilter, redact
@@ -35,3 +37,14 @@ def test_mcp_surface_has_no_purchase_tools():
     assert "shopping_search_products" in names and "shopping_apply_approved" in names
     for banned in ("checkout", "order", "payment", "purchase", "timeslot", "http", "request"):
         assert not any(banned in n for n in names), banned
+
+
+async def test_mcp_errors_reach_the_agent():
+    from mcp.server.mcpserver.exceptions import ToolError
+
+    from shopping.database import run_migrations
+    from shopping.mcp_server.server import shopping_get_run
+
+    run_migrations()  # the tool uses the app engine (a temp DB under tests)
+    with pytest.raises(ToolError, match="No shopping run"):
+        await shopping_get_run(run_id="does-not-exist")

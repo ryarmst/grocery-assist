@@ -106,7 +106,7 @@
       </details>
 
       <div class="actions">
-        <label class="small muted">Qty <input type="number" name="quantity" value="{{ sel.quantity | qty }}" min="0.1" step="any"></label>
+        <label class="small muted">Qty <input type="number" name="quantity" value="{{ sel.quantity | qty }}" min="{{ '0.1' if m.p.sold_by == 'weight' else '1' }}" step="{{ 'any' if m.p.sold_by == 'weight' else '1' }}"></label>
         <span class="spacer"></span>
         {% if mode == 'triage' %}<a class="btn" href="/runs/{{ run.id }}/triage?skipped={{ ((skipped | default('')) ~ ',' ~ sel.id) | urlencode }}">Skip</a>{% endif %}
         <button class="danger" name="decision" value="remove">Remove</button>

@@ -49,7 +49,7 @@
   <section class="card">
     <h2 class="card-title">Quantity</h2>
     <div class="actions">
-      <label class="small muted">Qty <input type="number" name="quantity" value="{{ (cart_line.quantity if cart_line else (sel.quantity if sel else 1)) | qty }}" min="0.1" step="any"></label>
+      <label class="small muted">Qty <input type="number" name="quantity" value="{{ (cart_line.quantity if cart_line else (sel.quantity if sel else 1)) | qty }}" min="{{ '0.1' if product.sold_by == 'weight' else '1' }}" step="{{ 'any' if product.sold_by == 'weight' else '1' }}"></label>
       <button name="action" value="quantity">Update quantity</button>
       <span class="small muted">Also used as the quantity when you swap.</span>
     </div>

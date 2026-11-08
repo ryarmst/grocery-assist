@@ -13,15 +13,18 @@ import time
 from typing import Annotated
 
 from mcp.server.mcpserver import MCPServer
+from mcp.server.mcpserver.exceptions import ToolError
 from pydantic import BaseModel, Field
 from sqlalchemy import select
 
 from shopping import context
+from shopping.auth.session import AuthRequired
 from shopping.config import settings
 from shopping.core import feedback as fbk
 from shopping.core import service
 from shopping.database import session_scope
 from shopping.models import REASON_CODES, ShoppingRun
+from shopping.retailer.client import RetailerError
 
 log = logging.getLogger("shopping.mcp")
 
@@ -34,7 +37,8 @@ Grocery shopping assistant for No Frills (store {settings.store_id}). Workflow:
    Use the exact item name from the user's list/pantry as `requirement` so history lines up across runs.
    For regular purchases, check shopping_get_requirement_history first and only stage items that are due.
 3. shopping_submit_run_for_review and give the user the review URL. The user triages items in the web UI,
-   often recording why they removed or swapped something; read shopping_get_feedback to learn from it.
+   often recording why they removed or swapped something; read shopping_get_feedback to learn from it,
+   and after distilling it elsewhere (e.g. into notes), call shopping_mark_feedback_reviewed.
 4. Approving an item in the web UI adds it to the cart immediately. shopping_apply_approved only retries
    approved items that couldn't be added (e.g. the session had expired); never use it on unapproved items.
 This service cannot check out or place orders; the user completes purchases themselves.
@@ -57,6 +61,9 @@ def logged(fn):
             return result
         except Exception as exc:
             log.warning("mcp tool=%s failed duration_ms=%.0f %s error=%s", fn.__name__, (time.monotonic() - started) * 1000, ids, exc)
+            # MCP only shows the agent messages from ToolError; our own errors are written for it to read.
+            if isinstance(exc, (service.ShoppingError, RetailerError, AuthRequired)):
+                raise ToolError(str(exc)) from exc
             raise
 
     return wrapper
@@ -373,6 +380,18 @@ async def shopping_get_requirement_history(
     for it, and a due / not_due / unknown verdict. Use this to decide which regular purchases to stage."""
     with session_scope() as session:
         return {"requirements": fbk.requirement_history(session, requirements, default_cadence_days=default_cadence_days)}
+
+
+@mcp.tool()
+@logged
+async def shopping_mark_feedback_reviewed(
+    feedback_ids: Annotated[list[int], Field(min_length=1, max_length=500)],
+    resolution: Annotated[str, Field(description="What was done, e.g. 'Notion: Bread → Shopping Preferences updated'")],
+) -> dict:
+    """Mark feedback records as handled (e.g. after distilling them into Notion's Shopping Preferences),
+    so later syncs with unreviewed_only=true don't process them twice."""
+    with session_scope() as session:
+        return {"marked": fbk.mark_reviewed(session, feedback_ids, resolution)}
 
 
 def tool_names() -> list[str]:
