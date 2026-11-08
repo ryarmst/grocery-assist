@@ -18,7 +18,7 @@ Add these two rows after `Regular Purchase?`:
 | Property | Type | Meaning |
 |---|---|---|
 | `Shopping Preferences` | text | Durable buying knowledge for the ingredient: brand, variety, size, quality and price conditions, learned from Ryan's shopping reviews (written by the grocery-shopping skill) and from what he says. Shared format below. Read it whenever shopping or quantities are involved. |
-| `Store Preference` | select | Where Ryan buys it: Grocery Store, Costco. Empty means Grocery Store. |
+| `Store Preference` | select | Where Ryan usually gets the best deal: Grocery Store, Costco. Empty means Grocery Store. A soft preference about deals, not a rule. |
 
 Replace the `Regular Purchase?` meaning with:
 
@@ -38,7 +38,7 @@ Add directly under the table:
 
 Append to the Groceries bullet:
 
-> `Quantity` is what the grocery-shopping skill sizes the cart from, so make it specific and purchasable: a count, weight or package ("2", "3 lb (1.4 kg)", "1 bag", "2 dozen"), following the row's `Size:` preference when there is one. Groceries has no store field: items whose pantry `Store Preference` is Costco still go on the list; the grocery-shopping skill sets them aside for Costco.
+> `Quantity` is what the grocery-shopping skill sizes the cart from, so make it specific and purchasable: a count, weight or package ("2", "3 lb (1.4 kg)", "1 bag", "2 dozen"), following the row's `Size:` preference when there is one. Groceries has no store field: items whose pantry `Store Preference` is Costco still go on the list; the grocery-shopping skill buys them at No Frills only on a genuinely good deal and otherwise sets them aside for Costco.
 
 ## 3. "Prompting and writes" → Field rules
 

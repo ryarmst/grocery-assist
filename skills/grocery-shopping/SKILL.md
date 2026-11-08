@@ -29,9 +29,11 @@ doesn't track stock levels; treat its rows as hints. Ryan's message beats Notion
 
 ### The two preference fields
 
-- **`Store Preference`** (select: Grocery Store, Costco). Where Ryan buys the item. Empty means
-  Grocery Store. **Costco items are never staged at No Frills** — list them in the hand-off as
-  "For Costco" instead (even if they're on the Groceries list), unless Ryan says to get them here this time.
+- **`Store Preference`** (select: Grocery Store, Costco). Where Ryan *usually* gets the best deal —
+  a soft preference, not a rule. Empty means Grocery Store. For a Costco item, stage it at No Frills
+  only when No Frills has a genuinely good deal (on sale, at or near the lowest price we've seen, or a
+  clearly good unit price), with reason `good_deal` and a rationale that says why it beats the usual
+  Costco run. Otherwise list it in the hand-off under "For Costco" (with its Quantity).
 - **`Shopping Preferences`** (text). Durable buying knowledge for that ingredient, learned from Ryan's
   reviews and statements. Format (shared with meal-planner), one fact per line, newest last, at most
   ~6 lines:
@@ -73,8 +75,8 @@ doesn't track stock levels; treat its rows as hints. Ryan's message beats Notion
 - **Perishables:** a regular-purchase perishable whose `Expiration` is past or within ~2 days →
   add `pantry_low`.
 - **Chat:** anything Ryan asks for now → `user_requested`.
-- **Store split:** anything whose pantry `Store Preference` is Costco → set aside for the "For Costco"
-  line, not staged.
+- **Store split:** anything whose pantry `Store Preference` is Costco → stage only on a genuinely good
+  No Frills deal (see above); otherwise set aside for the "For Costco" line.
 - Mention in one line what you dropped as `not_due` so Ryan can add it back.
 
 ### 2. Learn before choosing
@@ -129,7 +131,8 @@ means compare unit prices: same price for a smaller pack is a price increase.
 
 Reply with the `review_url`, the estimated total, then short lines, only if non-empty: notable deals;
 choice groups waiting on Ryan; not found / not carried; regular items skipped as not due; **For Costco:**
-items set aside by Store Preference (with their Quantity); preferences you applied that changed a pick.
+items set aside by Store Preference (with their Quantity), and any Costco items staged because of a
+good deal here; preferences you applied that changed a pick.
 Approving an item (or *Approve all*) puts it straight into the cart; remove/swap reasons and notes,
 and later changes on each cart line's **Modify** page, all feed *Learning from reviews*.
 
@@ -198,7 +201,7 @@ the Shopping Preferences line for that pantry row (write on confirmation), and r
 - Don't check out, book timeslots, or change payment; don't ask for credentials or tokens.
 - Don't stage blacklisted products or anything an `Avoid:` line excludes, unless Ryan explicitly asked
   for that exact item this time (add `user_requested`).
-- Don't stage Costco items at No Frills unless Ryan says so.
+- Don't stage Costco-preferred items at No Frills at a regular price; only for a genuinely good deal.
 - Don't change `Regular Purchase?`, `Replace?`, `Type`, `Location` or `Expiration` in Notion — that's
   meal-planner's job and Ryan's decision. This skill writes only `Shopping Preferences`,
   `Store Preference` (on confirmation) and Groceries `Status`/`Purchase Date` (on confirmation).
