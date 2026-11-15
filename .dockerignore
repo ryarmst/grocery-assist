@@ -8,3 +8,7 @@ user.txt
 **/__pycache__
 tests
 docs
+skills
+scripts
+*.md
+TODO*

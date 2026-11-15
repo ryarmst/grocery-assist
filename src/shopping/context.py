@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import os
-
 from shopping.auth.session import AuthSession
 from shopping.config import settings
 from shopping.retailer.client import PCExpressClient
@@ -11,7 +9,7 @@ from shopping.retailer.client import PCExpressClient
 auth = AuthSession(settings.session_dir)
 _client: PCExpressClient | None = None
 
-PUBLIC_URL = os.environ.get("PUBLIC_URL", f"http://localhost:{settings.port}").rstrip("/")
+PUBLIC_URL = settings.public_url
 
 
 def client() -> PCExpressClient:

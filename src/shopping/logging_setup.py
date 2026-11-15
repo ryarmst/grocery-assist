@@ -30,6 +30,13 @@ class RedactingFilter(logging.Filter):
         return True
 
 
+class QuietHealthChecks(logging.Filter):
+    """Keep container health checks (every minute) out of the access log."""
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        return "/healthz" not in record.getMessage()
+
+
 def setup_logging(level: str = "INFO") -> None:
     handler = logging.StreamHandler()
     handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(name)s: %(message)s"))
@@ -43,3 +50,4 @@ def setup_logging(level: str = "INFO") -> None:
         lg = logging.getLogger(name)
         lg.handlers[:] = []
         lg.propagate = True
+    logging.getLogger("uvicorn.access").addFilter(QuietHealthChecks())

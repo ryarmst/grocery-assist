@@ -1,7 +1,8 @@
 services:
-  shopping:
+  grocery-assist:
     build: .
-    image: shopping-assistant:latest
+    image: grocery-assist:latest
+    container_name: grocery-assist
     restart: unless-stopped
     env_file: .env
     environment:
@@ -9,8 +10,25 @@ services:
       HOST: 0.0.0.0
       PORT: "8000"
     ports:
-      # Bound to localhost only. Change to "8000:8000" (and set MCP_TOKEN + ALLOWED_HOSTS)
-      # to reach it from other machines on your network.
-      - "127.0.0.1:8000:8000"
+      # Published on all host interfaces by default. Set BIND_ADDR=127.0.0.1 (in .env) to keep it local.
+      - "${BIND_ADDR:-0.0.0.0}:${HOST_PORT:-8000}:8000"
     volumes:
-      - ./data:/data
+      - grocery-data:/data          # SQLite DB + retailer session; back this up
+    # Hardening and resource limits (the app idles at ~0% CPU and well under 200 MB).
+    read_only: true
+    tmpfs:
+      - /tmp:size=16m
+    security_opt:
+      - no-new-privileges:true
+    cap_drop: [ALL]
+    mem_limit: 256m
+    cpus: 0.5
+    pids_limit: 64
+    logging:
+      driver: json-file
+      options:
+        max-size: 5m
+        max-file: "3"
+
+volumes:
+  grocery-data:
