@@ -51,7 +51,8 @@ claude mcp add --transport http grocery http://<host>:8000/mcp/ --header "Author
 
 Other MCP clients use the same URL and header. Give the agent the skill in
 [`skills/grocery-shopping/SKILL.md`](skills/grocery-shopping/SKILL.md) and a Notion connection (grocery list
-and pantry live there).
+and pantry live there). Its companion, [`skills/meal-planner`](skills/meal-planner/SKILL.md), plans meals,
+keeps the Notion pantry current and writes the Groceries list this app shops from.
 
 ### How the agent uses it
 
