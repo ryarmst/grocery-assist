@@ -60,7 +60,9 @@ keeps the Notion pantry current and writes the Groceries list this app shops fro
 2. Find products and deals → `shopping_search_products`, `shopping_get_deals`, `shopping_get_product`
 3. Check history → `shopping_get_product_history`, `shopping_get_requirement_history` (is a regular item due?)
 4. Stage a run → `shopping_create_run`, `shopping_add_selection`, `shopping_add_choice_group` (several options,
-   one recommended), `shopping_update_selection`, `shopping_submit_run_for_review` → returns a review URL
+   one recommended), `shopping_update_selection`, `shopping_submit_run_for_review` → returns a review URL.
+   Each item carries a substitution preference (off by default; the skill allows it only where a swap is
+   harmless)
 5. **You** triage it in the web UI; approved items go into the cart
 6. Learn from your review → `shopping_get_feedback`, then `shopping_mark_feedback_reviewed` once the lesson
    is saved (the skill writes it to Notion's Shopping Preferences)

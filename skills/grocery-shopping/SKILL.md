@@ -1,6 +1,6 @@
 ---
 name: grocery-shopping
-description: Build Ryan's No Frills grocery order for review and learn from how he reviews it. Reads the Groceries list (with Quantity) and the Kitchen Pantry and Storage inventory from Notion (Regular Purchase?, Shopping Preferences, Store Preference), uses the shopping-assistant MCP tools to search products, check deals, price history, past feedback and saved rules, stages a shopping run that Ryan triages in the web UI (approving puts items in the cart), and afterwards distills his removals, swaps and notes into the pantry's Shopping Preferences and Store Preference fields. Use whenever Ryan asks to go grocery shopping, do the weekly order, restock, fill the cart, check what regular items are due, see what's on sale at No Frills, or update his shopping preferences from feedback, even if he doesn't say "shopping run".
+description: Build Ryan's No Frills grocery order for review and learn from how he reviews it. Reads the Groceries list (with Quantity) and the Kitchen Pantry and Storage inventory from Notion (Regular Purchase?, Shopping Preferences, Store Preference), uses the shopping-assistant MCP tools to search products, check deals, price history, past feedback and saved rules, stages a shopping run that Ryan triages in the web UI (approving puts items in the cart) with a per-item substitution preference, imports placed orders to see what was actually bought, and afterwards distills his removals, swaps, substitution choices and notes into the pantry's Shopping Preferences and Store Preference fields. Use whenever Ryan asks to go grocery shopping, do the weekly order, restock, fill the cart, check what regular items are due, see what's on sale at No Frills, look at a past order or what he bought, set or change substitutions, or update his shopping preferences from feedback, even if he doesn't say "shopping run".
 ---
 
 # Grocery shopping
@@ -18,13 +18,15 @@ buying knowledge (`Shopping Preferences`, `Store Preference`) current from Ryan'
 
 | Where | What | How |
 |---|---|---|
-| Notion **Groceries** | The shopping list. Active rows: `Status` = New. `Quantity` (text) says how much | `collection://3542d1e0-e400-80df-bb84-000b39732b7d` |
+| Notion **Groceries** | The shopping list. Active rows: `Status` = New. `Quantity` (text) says how much; `🥕 Kitchen Pantry and Storage` (relation) links the row to its pantry row | `collection://3542d1e0-e400-80df-bb84-000b39732b7d` |
 | Notion **Kitchen Pantry and Storage** | What's kept: `Type`, `Replace?`, `Regular Purchase?`, `Expiration`, **`Shopping Preferences`**, **`Store Preference`** | view `view://40a2d1e0-e400-805d-807e-000cbbe67f8c` (data source `collection://40a2d1e0-e400-80f0-a008-000be000338e`) |
-| shopping-assistant MCP | Products, prices, price history, product-level rules, past runs, Ryan's triage feedback, the cart | `shopping_*` tools |
+| shopping-assistant MCP | Products, prices, price history, product-level rules, past runs, Ryan's triage feedback, the cart, placed orders | `shopping_*` tools |
 
 Read Notion with `query_data_sources` in **view mode** (`page_size: 100`, follow `next_cursor` while
 `has_more`). Avoid SQL mode (limited quota). Strip stray markup from names (`<p>Pecans</p>` → Pecans).
-Match Groceries rows to pantry rows by name, ignoring case, plurals, markup and word order. The pantry
+Match Groceries rows to pantry rows **by the relation first**; when it's empty, by name, ignoring case,
+plurals, markup and word order. If two pantry rows describe the same item (e.g. two "Tortilla Chips"
+rows), treat them as one: merge their Shopping Preferences when reading and stage it once. The pantry
 doesn't track stock levels; treat its rows as hints. Ryan's message beats Notion.
 
 ### The two preference fields
@@ -87,7 +89,7 @@ doesn't track stock levels; treat its rows as hints. Ryan's message beats Notion
 - **Unsynced feedback first.** If `shopping_get_feedback` with `unreviewed_only: true` returns records,
   run *Learning from reviews* (below) before building the run — or at least apply what they say to this
   run, and offer the Notion update at hand-off.
-- **Shopping Preferences** of each item you're about to stage: follow `Prefer`/`Size`/`Buy when`;
+- **Shopping Preferences** of each item you're about to stage: follow `Prefer`/`Size`/`Buy when`/`Subs`;
   never stage something an `Avoid` line excludes.
 - `shopping_get_preferences` — blacklists (`absolute: true`) are hard rules; the rest is strong
   guidance (a much better deal can justify an alternative — say so). A `prefer_for_type` whose scope
@@ -160,7 +162,8 @@ the same way.
 Reply with the `review_url`, the estimated total, then short lines, only if non-empty: notable deals;
 choice groups waiting on Ryan; not found / not carried; regular items skipped as not due; **For Costco:**
 items set aside by Store Preference (with their Quantity), and any Costco items staged because of a
-good deal here; preferences you applied that changed a pick.
+good deal here; preferences you applied that changed a pick; **Substitutions on:** the items where you
+allowed them (with the note), so Ryan can spot any he'd rather not.
 Approving an item (or *Approve all*) puts it straight into the cart; remove/swap reasons and notes,
 and later changes on each cart line's **Modify** page, all feed *Learning from reviews*.
 
@@ -191,7 +194,8 @@ Turns the app's feedback (removals, swaps, quantity changes, notes) into durable
 both skills — and Ryan — can use it.
 
 1. **Collect.** `shopping_get_feedback` with `unreviewed_only: true`, plus the run's
-   `user_feedback` from `shopping_get_run`. Group records by `requirement`.
+   `user_feedback` from `shopping_get_run`, plus the latest imported order (`shopping_get_past_order`):
+   its `approved_in_app_but_not_bought`, `added_outside_app` and `substituted` lists. Group by `requirement`.
 2. **Distill per item** into Shopping Preferences lines (format above). Use Ryan's words; be specific
    (brand, variety, size, store, price condition). Examples:
    - Swapped No Name wrap → Glad, "No Name is poor quality" → `Prefer: Glad ClingWrap` +
@@ -204,6 +208,11 @@ both skills — and Ryan — can use it.
      `wrong_size`/`better_size` → a `Size:` line naming the chosen size; `dislike_product`/`quality`
      → `Avoid:` the product; `have_enough` → no Notion change (it's cadence — the app's requirement
      history already uses it).
+   - `substitution_changed` (Ryan overrode your substitution choice): one-off → nothing; the same direction
+     twice (it shows as a pattern) → `Subs: never` or `Subs: OK — <his note>`.
+   - Order outcomes: a substitution Ryan says was fine → `Subs: OK — <what was substituted>`; one he
+     disliked → `Subs: never`. Something he keeps adding on nofrills.ca himself (e.g. Stonemill sourdough)
+     → a `Prefer:` line. Items dropped at checkout → treat as bare removals.
    - Bare removals (no tags, no note) carry no preference. Ask once, grouped: "Why did these come
      out — have enough, buy elsewhere (Costco?), or don't want them?" Don't guess.
 3. **Map to pantry rows** by name. Merge with the row's existing Shopping Preferences: drop duplicates,
