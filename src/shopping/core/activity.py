@@ -3,6 +3,7 @@ cart changes, notes and rules. Built from the existing tables, newest first."""
 
 from __future__ import annotations
 
+import json
 from datetime import timedelta
 
 from sqlalchemy import select
@@ -71,6 +72,12 @@ def activity(session: Session, *, days: int = 30, kind: str | None = None, q: st
         if f.action == "chose_alternative":
             events.append({**base, "kind": "swapped", "title": "Swapped", "detail": f"→ {d['chosen_product']}",
                            "chosen_product_id": d["chosen_product_id"], "reasons_text": ", ".join(d["tag_labels"]), "note": f.note})
+        elif f.action == "substitution_changed":
+            ctx = json.loads(f.context or "{}")
+            to = ctx.get("to") or {}
+            events.append({**base, "kind": "note", "title": "Substitution changed",
+                           "detail": ("subs OK" if to.get("allowed") else "subs off") + (" · specific substitute" if to.get("substitute") else ""),
+                           "note": f.note})
         elif f.action in ("note", "approved", "quantity_changed") and (f.note or f.tags):
             events.append({**base, "kind": "note", "title": {"note": "Note", "approved": "Kept — note", "quantity_changed": "Quantity changed — note"}[f.action],
                            "detail": ", ".join(d["tag_labels"]), "note": f.note})
@@ -80,7 +87,8 @@ def activity(session: Session, *, days: int = 30, kind: str | None = None, q: st
         ca_q = ca_q.where(CartAction.shopping_run_id == run_id)
     for a in session.scalars(ca_q):
         before, after = a.quantity_before or 0, a.quantity_after or 0
-        verb = "Added to cart" if before == 0 and after > 0 else "Removed from cart" if after == 0 else "Cart quantity changed"
+        verb = ("Substitution set" if a.action == "substitution" else
+                "Added to cart" if before == 0 and after > 0 else "Removed from cart" if after == 0 else "Cart quantity changed")
         label = a.product_label or (product_label(session.get(Product, a.product_id)) if a.product_id else None) or a.retailer_product_id
         events.append({"time": a.timestamp, "kind": "cart", "title": verb if a.success else f"{verb} — failed", "ok": a.success,
                        "product": label, "product_id": a.retailer_product_id, "run_id": a.shopping_run_id,

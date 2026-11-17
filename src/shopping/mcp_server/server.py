@@ -42,7 +42,10 @@ Grocery shopping assistant for No Frills (store {settings.store_id}). Workflow:
    and after distilling it elsewhere (e.g. into notes), call shopping_mark_feedback_reviewed.
 4. Approving an item in the web UI adds it to the cart immediately. shopping_apply_approved only retries
    approved items that couldn't be added (e.g. the session had expired); never use it on unapproved items.
-This service cannot check out or place orders; the user completes purchases themselves.
+Substitutions are per item and OFF by default. Allow them only where a swap is no big deal (commodity
+produce, same-% milk, canned staples, a generic brand); never for items chosen because of a special deal,
+a preferred brand/product/variety, or anything with an "Avoid" or "Subs: never" preference.
+This service cannot check out or place orders, and never edits an order that has been submitted.
 Blacklist preferences are absolute; other preferences are guidance.
 """
 
@@ -236,11 +239,16 @@ async def shopping_add_selection(
     reasons: Annotated[list[str], Field(description=f"One or more of: {', '.join(REASON_CODES)}")] = [],  # noqa: B006
     rationale: Annotated[str | None, Field(description="One or two sentences explaining why")] = None,
     requirement: Annotated[str | None, Field(description="The need this fills, e.g. 'milk'")] = None,
+    substitution_allowed: Annotated[bool, Field(description="Let the shopper substitute if it's unavailable. Only for items where a swap is no big deal (see instructions); never for items chosen as a special deal or a specific brand/variety.")] = False,
+    substitution_note: Annotated[str | None, Field(description="Short instruction for the shopper, e.g. 'any brand, same size'")] = None,
+    substitute_product_id: Annotated[str | None, Field(description="Optional specific replacement product id (implies substitutions allowed)")] = None,
 ) -> dict:
     """Stage one product in a run for the user to review. Fetches the current price and records it."""
     with session_scope() as session:
         sel = await service.add_selection(session, context.client(), run_id, product_id=product_id, quantity=quantity,
-                                          reasons=reasons, rationale=rationale, requirement=requirement)
+                                          reasons=reasons, rationale=rationale, requirement=requirement,
+                                          substitution_allowed=substitution_allowed, substitution_note=substitution_note,
+                                          substitute_product_id=substitute_product_id)
         return service.selection_dict(session, sel)
 
 
@@ -249,6 +257,9 @@ class ChoiceOption(BaseModel):
     quantity: float = Field(1, gt=0)
     reasons: list[str] = []
     rationale: str | None = None
+    substitution_allowed: bool = False
+    substitution_note: str | None = None
+    substitute_product_id: str | None = None
 
 
 @mcp.tool()
@@ -276,10 +287,15 @@ async def shopping_update_selection(
     rationale: str | None = None,
     reasons: list[str] | None = None,
     withdraw: Annotated[bool, Field(description="Withdraw this suggestion")] = False,
+    substitution_allowed: bool | None = None,
+    substitution_note: str | None = None,
+    substitute_product_id: str | None = None,
 ) -> dict:
-    """Change a pending selection's quantity, rationale or reasons, or withdraw it. Cannot approve."""
+    """Change a pending selection's quantity, rationale, reasons or substitution preference, or withdraw it. Cannot approve."""
     with session_scope() as session:
-        sel = service.update_selection(session, selection_id, quantity=quantity, rationale=rationale, reasons=reasons, withdraw=withdraw)
+        sel = service.update_selection(session, selection_id, quantity=quantity, rationale=rationale, reasons=reasons, withdraw=withdraw,
+                                       substitution_allowed=substitution_allowed, substitution_note=substitution_note,
+                                       substitute_product_id=substitute_product_id)
         return service.selection_dict(session, sel)
 
 

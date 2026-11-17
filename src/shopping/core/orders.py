@@ -57,6 +57,7 @@ def import_order(session: Session, data: PastOrderData, summary: PastOrderSummar
             position=i, product_id=product.id if product else None, retailer_product_id=line.product_id, name=line.name,
             brand=line.brand, size=line.size, quantity=line.quantity, weight_kg=line.weight_kg, unit_price=line.unit_price,
             total=line.total, fulfilled=line.fulfilled, is_fee=line.is_fee,
+            substitution_allowed=line.substitution_allowed, substituted_with=line.substituted_with,
         ))
     session.flush()
     _match_selections(session, order)
@@ -111,10 +112,12 @@ def order_view(session: Session, order: PastOrder) -> dict:
         "items": [
             {"product_id": l.retailer_product_id, "name": l.name, "brand": l.brand, "size": l.size, "quantity": _qty_text(l),
              "unit_price": round2(l.unit_price), "per": "kg" if l.weight_kg else "ea", "total": round2(l.total), "fulfilled": l.fulfilled,
+             "substitution_allowed": l.substitution_allowed, "substituted_with": l.substituted_with,
              "from_run": None if not l.selection else {"run_id": l.selection.shopping_run_id, "requirement": l.selection.requirement}}
             for l in lines
         ],
         "not_fulfilled": [l.name for l in lines if not l.fulfilled],
+        "substituted": [{"name": l.name, "with": l.substituted_with} for l in lines if l.substituted_with],
         "from_runs": sum(1 for l in lines if l.selection_id),
         "added_outside_app": [l.name for l in lines if l.fulfilled and not l.selection_id],
         "approved_in_app_but_not_bought": approved_not_bought,

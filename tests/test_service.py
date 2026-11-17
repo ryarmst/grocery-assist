@@ -22,18 +22,27 @@ class FakeClient:
     def __init__(self):
         self.products = catalogue()
         self.cart: dict[str, float] = {}
+        self.subs: dict[str, object] = {}  # product id -> SubstitutionSpec last sent
         self.set_calls: list[tuple[str, float]] = []
 
     async def get_product(self, product_id):
         return self.products[product_id]
 
     async def get_cart(self):
-        lines = [CartLine(pid, "x", None, q, None, None, None, None, "3728") for pid, q in self.cart.items()]
+        lines = [CartLine(pid, "x", None, q, None, None, None, None, "3728",
+                          substitution_allowed=getattr(self.subs.get(pid), "allowed", False))
+                 for pid, q in self.cart.items()]
         return Cart("cart-1", "3728", "Test", lines, None, None, None)
 
-    async def set_cart_quantity(self, product_id, quantity):
+    async def set_cart_quantity(self, product_id, quantity, substitution=None):
         self.set_calls.append((product_id, quantity))
         self.cart[product_id] = quantity
+        if substitution is not None:
+            self.subs[product_id] = substitution
+        return await self.get_cart()
+
+    async def set_cart_substitution(self, product_id, substitution):
+        self.subs[product_id] = substitution
         return await self.get_cart()
 
 

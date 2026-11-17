@@ -336,6 +336,9 @@ class CartLine:
     regular_line_total: float | None
     selling_type: str | None
     seller_id: str | None
+    substitution_allowed: bool | None = None
+    substitution_comment: str | None = None
+    selected_substitution: str | None = None  # retailer product id of a chosen substitute
 
 
 @dataclass
@@ -367,6 +370,21 @@ class Cart:
         return 0.0
 
 
+@dataclass
+class SubstitutionSpec:
+    """Per-item substitution instructions sent with a cart update."""
+
+    allowed: bool
+    comment: str = ""
+    substitute: NormalizedProduct | None = None  # a specific replacement the shopper should use
+
+
+def substitute_text(p: NormalizedProduct) -> str:
+    """The retailer's format for a customer-chosen substitute (as sent by the website)."""
+    price = f"{p.effective_price:.2f}" if p.effective_price is not None else ""
+    return f"Customer Substitute: {p.brand or ''}, {p.name}, Price: {price}, ArticleID: {p.retailer_product_id}"
+
+
 def cart_from_response(data: dict) -> Cart:
     cart = data.get("cart", data)
     lines: list[CartLine] = []
@@ -395,6 +413,9 @@ def cart_from_response(data: dict) -> Cart:
                     regular_line_total=prices.get("totalRegularPrice"),
                     selling_type=offer.get("sellingType"),
                     seller_id=(offer.get("vendor") or {}).get("id"),
+                    substitution_allowed=(entry.get("substitutionPreference") or {}).get("substitutionAllowed"),
+                    substitution_comment=(entry.get("substitutionPreference") or {}).get("comment") or None,
+                    selected_substitution=entry.get("selectedSubstitution") or None,
                 )
             )
     return Cart(cart.get("id") or "", store_id, store_name, lines, subtotal, est, disc)
@@ -432,6 +453,8 @@ class PastOrderLineData:
     weighted: bool
     image_url: str | None = None
     link: str | None = None
+    substitution_allowed: bool | None = None
+    substituted_with: str | None = None
 
 
 @dataclass
@@ -475,6 +498,8 @@ def past_order_from_detail(data: dict) -> PastOrderData:
             quantity=quantity, weight_kg=weight_kg, unit_price=unit, total=total, fulfilled=fulfilled,
             is_fee=bool(name.isupper() and _FEE_RE.search(name)), weighted=weighted,
             image_url=p.get("primaryImage"), link=p.get("link"),
+            substitution_allowed=(e.get("substitutionData") or e.get("substitutionPreference") or {}).get("substitutionAllowed"),
+            substituted_with=e.get("selectedSubstitution") or None,
         ))
     return PastOrderData(order_id=str(od.get("orderNumber") or ""), subtotal=money(od.get("subTotal")), tax=money(od.get("totalTax")),
                          total=money(od.get("totalPriceWithTax") or od.get("totalPrice")), points_earned=data.get("pointsEarned"), lines=lines)

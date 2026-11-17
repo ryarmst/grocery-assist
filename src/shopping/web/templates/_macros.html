@@ -26,6 +26,7 @@
     {% if c.obs and c.obs.deal_text %}<span class="badge deal">{{ c.obs.deal_text }}</span>{% endif %}
     {% if c.obs and c.obs.pc_optimum_text %}<span class="badge pref">{{ c.obs.pc_optimum_text }}</span>{% endif %}
     {% for f in c.flags %}<span class="badge pref">{{ f.replace('_', ' ') }}</span>{% endfor %}
+    {% if c.sel.substitution_allowed %}<span class="badge sub">Subs OK{% if c.sel.substitution_note %}: {{ c.sel.substitution_note }}{% endif %}</span>{% endif %}
   </div>
 {% endmacro %}
 
@@ -78,6 +79,10 @@
       </div>
       {% endif %}
 
+      <div class="subs-row small">
+        <label class="inline-check"><input type="checkbox" name="sub_allowed" value="1" {{ 'checked' if sel.substitution_allowed }}> Substitutes OK if unavailable</label>
+        <input type="text" name="sub_note" value="{{ sel.substitution_note or '' }}" placeholder="note for the shopper, e.g. any brand, same size" maxlength="250">
+      </div>
       <details class="why" {{ 'open' if mode == 'triage' }}>
         <summary>Why? <span class="muted small">(optional — reasons are saved for later review)</span></summary>
         <div class="chip-group"><span class="chip-head">Removing</span>
@@ -117,7 +122,8 @@
     <div class="actions">
       <span class="small muted">Qty {{ sel.quantity | qty }}{% if sel.suggested_quantity and sel.suggested_quantity != sel.quantity %} (suggested {{ sel.suggested_quantity | qty }}){% endif %}
         {% if sel.applied_to_cart_at and sel.status == 'applied' %} · added to cart {{ sel.applied_to_cart_at | local }}{% endif %}
-        {% if sel.added_by == 'user' %} · added by you{% endif %}</span>
+        {% if sel.added_by == 'user' %} · added by you{% endif %}
+        · subs {{ 'OK' if sel.substitution_allowed else 'off' }}{% if sel.substitution_note %} (“{{ sel.substitution_note }}”){% endif %}</span>
       <span class="spacer"></span>
       {% if editable %}
         {% if sel.status == 'rejected' %}

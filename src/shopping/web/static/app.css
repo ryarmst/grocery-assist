@@ -148,3 +148,7 @@ tr.ev-fail .evk { color: var(--bad); }
 .status.applied { color: var(--accent); }
 table.events td:nth-child(3) { min-width: 240px; }
 table.events td:nth-child(4) { min-width: 200px; }
+.subs-row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-top: 10px; }
+.subs-row input[type=text] { flex: 1; min-width: 200px; }
+.inline-check { display: inline-flex; gap: 6px; align-items: center; }
+.badge.sub { color: var(--accent); }

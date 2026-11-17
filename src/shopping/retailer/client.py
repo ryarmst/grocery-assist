@@ -25,11 +25,13 @@ from shopping.retailer.normalize import (
     NormalizedProduct,
     PastOrderData,
     PastOrderSummary,
+    SubstitutionSpec,
     cart_from_response,
     from_product_detail,
     from_search_tile,
     past_order_from_detail,
     past_orders_from_history,
+    substitute_text,
 )
 
 log = logging.getLogger(__name__)
@@ -289,16 +291,31 @@ class PCExpressClient:
             raise
         return cart_from_response(data)
 
-    async def set_cart_quantity(self, product_id: str, quantity: float) -> Cart:
+    async def set_cart_quantity(self, product_id: str, quantity: float, *, substitution: SubstitutionSpec | None = None) -> Cart:
+        """Set an item's quantity (absolute). With `substitution`, also set its substitution preference."""
         if quantity < 0:
             raise RetailerError("Quantity cannot be negative.")
         cart_id = await self._current_cart_id()
-        body = {"entries": {product_id: {"quantity": quantity, "fulfillmentMethod": "pickup", "sellerId": self.store_id}}}
-        data = await self._call("cart_update", "POST", f"/v1/carts/{cart_id}", body=body, auth=True)
+        entry: dict = {"quantity": quantity, "fulfillmentMethod": "pickup", "sellerId": self.store_id}
+        if substitution is not None:
+            entry.update({
+                "substitutionComment": (substitution.comment or "")[:250],
+                "substitutionAllowed": bool(substitution.allowed or substitution.substitute),
+                "selectedSubstitution": substitute_text(substitution.substitute) if substitution.substitute else "",
+            })
+        data = await self._call("cart_update", "POST", f"/v1/carts/{cart_id}", body={"entries": {product_id: entry}}, auth=True)
         errors = data.get("errors") or []
         if errors:
             raise RetailerError(f"Retailer reported cart errors: {json.dumps(errors)[:300]}")
         return cart_from_response(data)
+
+    async def set_cart_substitution(self, product_id: str, substitution: SubstitutionSpec) -> Cart:
+        """Change only the substitution preference of an item already in the cart."""
+        cart = await self.get_cart()
+        line = next((l for l in cart.lines if l.product_id == product_id), None)
+        if line is None:
+            raise RetailerError("That item isn't in the cart.")
+        return await self.set_cart_quantity(product_id, line.quantity, substitution=substitution)
 
     async def remove_cart_item(self, product_id: str) -> Cart:
         return await self.set_cart_quantity(product_id, 0)

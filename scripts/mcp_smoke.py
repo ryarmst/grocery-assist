@@ -35,7 +35,8 @@ async def main(url: str) -> None:
         tools = await c.list_tools()
         names = sorted(t.name for t in tools.tools)
         print(f"✓ list_tools: {len(names)} tools")
-        assert not any(w in n for n in names for w in ("checkout", "order", "payment", "submit_order")), names
+        assert not any(w in n for n in names for w in ("checkout", "payment", "purchase", "place", "submit_order")), names
+        assert {n for n in names if "order" in n} <= {"shopping_get_past_orders", "shopping_get_past_order"}, names
 
         prefs = show("get_preferences", await c.call_tool("shopping_get_preferences", {}))
         print(f"    {len(prefs['preferences'])} active preferences")

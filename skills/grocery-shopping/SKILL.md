@@ -47,7 +47,8 @@ doesn't track stock levels; treat its rows as hints. Ryan's message beats Notion
   ```
 
   Prefixes: `Prefer:` (brand/product/variety to choose), `Avoid:` (don't stage — treat as firm),
-  `Size:` (package/format), `Buy when:` (conditions, price thresholds), `Note:` (anything else).
+  `Size:` (package/format), `Buy when:` (conditions, price thresholds), `Subs:` (substitutions — e.g.
+  `Subs: never`, `Subs: OK — any brand, same size`), `Note:` (anything else).
   A line may end with a month tag like `[2026-11]` when timing matters. Newer lines win over older
   contradicting ones. Ryan also writes free text without a prefix ("2% bags", "Bulk, good prices
   preferred"): read it the same way, and keep his lines verbatim when merging — never reformat them.
@@ -128,6 +129,31 @@ means compare unit prices: same price for a smaller pack is a price increase.
    - A few opportunistic deals on things Ryan keeps (pantry `Type` Staple or `Replace?` Yes, Store
      Preference not Costco) are fine with `good_deal`; keep them few.
 3. `shopping_submit_run_for_review`.
+
+### Substitutions
+
+Each staged item has a per-item substitution preference (`substitution_allowed`, `substitution_note`,
+optional `substitute_product_id`) that is sent to the cart when Ryan approves it. **Default: off.** Turn it
+on only when a swap would be no big deal:
+
+- **OK:** commodity produce and basics where any equivalent works (onions, carrots, a cucumber, bananas),
+  same-% / same-size milk, canned tomatoes and beans, generic pantry staples — with a short note telling
+  the shopper what "equivalent" means ("any brand, same size", "2% 4 L bags only", "green or red cabbage").
+- **Off:** anything picked because it's a **special deal** (`good_deal` — a substitute loses the reason to
+  buy it); anything chosen for a **specific brand, product or variety** (preferred_product / preferred_brand,
+  a `Prefer:` line, the recommended option of a choice group Ryan cares about); anything with an `Avoid:`
+  line or `Subs: never`; meat, fish, cheese and specialty items where cut/quality matters; pricey items.
+- A specific `substitute_product_id` is worth naming only when there's an obvious second choice
+  (the same product in another size, the No Name equivalent) — pick it from search results.
+- Follow the item's `Subs:` line and `last_substitution` in `shopping_get_requirement_history` first;
+  those reflect Ryan's own choices.
+- Say in the rationale when subs are on and why ("subs OK: any brand of canned tomatoes").
+
+Ryan can change it per item in triage, on Modify, or from the cart. When he overrides your choice it's
+recorded as `substitution_changed` feedback; repeated overrides show up as a pattern suggesting a `Subs:`
+line — offer to write it to the item's Shopping Preferences during *Learning from reviews*. Imported orders
+show what was actually substituted (`substituted`); ask Ryan once whether it was fine and record the answer
+the same way.
 
 ### 6. Hand off
 
@@ -213,6 +239,9 @@ the Shopping Preferences line for that pantry row (write on confirmation), and r
 - Don't stage blacklisted products or anything an `Avoid:` line excludes, unless Ryan explicitly asked
   for that exact item this time (add `user_requested`).
 - Don't stage Costco-preferred items at No Frills at a regular price; only for a genuinely good deal.
+- Don't allow substitutions on deal items, brand/variety-specific picks, or anything marked `Subs: never`.
+- The app never edits an order that has already been submitted (it only uses the open cart); changes to a
+  placed order are Ryan's to make on nofrills.ca.
 - Don't change `Regular Purchase?`, `Replace?`, `Type`, `Location` or `Expiration` in Notion — that's
   meal-planner's job and Ryan's decision. This skill writes only `Shopping Preferences`,
   `Store Preference` (on confirmation) and Groceries `Status`/`Purchase Date` (on confirmation).

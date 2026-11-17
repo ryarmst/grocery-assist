@@ -150,6 +150,17 @@ All cart calls need `authorization: Bearer <AccessToken>` + `is-helios-account: 
 | Remove | same, `quantity: 0` |
 
 - Quantity is **absolute** (set, not increment). Several products can be sent in one call.
+- **Substitutions (per item)** use the same call; the entry may also carry
+  `"substitutionAllowed": true|false`, `"substitutionComment": "<note to shopper>"` and
+  `"selectedSubstitution": "Customer Substitute: <brand>, <name>, Price: <price>, ArticleID: <code>"`
+  (empty string for none). The cart then reports `substitutionPreference: {substitutionAllowed, comment}` and
+  `selectedSubstitution: "<code>"` per entry; orders report `substitutionData` per line.
+  `POST /v1/recommendation/substitution-details {bookingDate, productCodes, pcId, cartId, storeId, banner,
+  pickupType, timeSlot, lang}` returns the site's suggested substitutes per product (needs a booked slot;
+  not used by the app).
+- **Submitted orders** can be edited until their cutoff: `GET /v1/customers/{pcid}/carts?status=open` then
+  lists the order's cart under `liveOrders` (with `carts: []`). The app deliberately uses only `carts`, so it
+  never changes a placed order.
 - Response: `{"cart": {...}, "errors": []}`.
 - Cart shape: `orders[0].entries[]` with `quantity`, `prices.{salePrice, totalSalePrice,
   totalRegularPrice, comparisonPrices}`, `offer.{id, sellingType, wasPrice, vendor.id,

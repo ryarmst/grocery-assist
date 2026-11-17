@@ -10,7 +10,7 @@
     {% if cart.store_id and cart.store_id != store_id %}<br><strong>Note:</strong> the cart's pickup store differs from this app's store ({{ store_id }}); prices may differ.{% endif %}</p>
   {% if cart.lines %}
   <div class="table-wrap"><table>
-    <thead><tr><th>Product</th><th class="num">Qty</th><th class="num">Unit</th><th class="num">Line total</th><th></th></tr></thead>
+    <thead><tr><th>Product</th><th class="num">Qty</th><th class="num">Unit</th><th class="num">Line total</th><th>Subs</th><th></th></tr></thead>
     <tbody>
     {% for l in cart.lines %}
     <tr>
@@ -23,6 +23,13 @@
       </td>
       <td class="num">{{ l.unit_price | money }}</td>
       <td class="num">{{ l.line_total | money }}{% if l.regular_line_total and l.line_total and l.regular_line_total > l.line_total %}<br><span class="muted small" style="text-decoration:line-through">{{ l.regular_line_total | money }}</span>{% endif %}</td>
+      <td class="small">
+        <form method="post" action="/cart/{{ l.product_id }}/substitution" class="inline">
+          <input type="hidden" name="allowed" value="{{ '' if l.substitution_allowed else '1' }}">
+          <button class="link" title="Click to {{ 'turn off' if l.substitution_allowed else 'allow' }}">{{ 'OK' if l.substitution_allowed else 'off' }}</button>
+        </form>{% if l.substitution_comment %}<br><span class="muted">“{{ l.substitution_comment }}”</span>{% endif %}
+        {% if l.selected_substitution %}<br><span class="muted">→ <a href="/history/{{ l.selected_substitution }}">chosen substitute</a></span>{% endif %}
+      </td>
       <td><a class="btn" href="/cart/{{ l.product_id }}/modify">Modify…</a></td>
     </tr>
     {% endfor %}

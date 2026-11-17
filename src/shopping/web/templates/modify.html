@@ -56,6 +56,19 @@
   </section>
 
   <section class="card">
+    <h2 class="card-title">Substitution if it's unavailable</h2>
+    {% set sub_on = (sel.substitution_allowed if sel else (cart_line.substitution_allowed if cart_line else False)) %}
+    {% set sub_txt = (sel.substitution_note if sel else (cart_line.substitution_comment if cart_line else '')) or '' %}
+    <div class="subs-row small">
+      <label class="inline-check"><input type="checkbox" name="sub_allowed" value="1" {{ 'checked' if sub_on }}> Substitutes OK</label>
+      <input type="text" name="sub_note" value="{{ sub_txt }}" placeholder="note for the shopper, e.g. any brand, same size" maxlength="250">
+      <button name="action" value="substitution">Save substitution</button>
+    </div>
+    {% if sel and sel.substitute_product_id %}<p class="small muted">Specific substitute chosen: <a href="/history/{{ sel.substitute_product_id }}">{{ sel.substitute_product_id }}</a></p>{% endif %}
+    <p class="small muted">To name a specific substitute, pick it in the list below and press “Use as substitute”.</p>
+  </section>
+
+  <section class="card">
     <h2 class="card-title">Swap for a different product</h2>
     {% if options %}
     <div class="small muted">Other options the agent offered</div>
@@ -86,7 +99,9 @@
       </label>
     {% else %}{% if not search_error %}<p class="muted small">No results.</p>{% endif %}{% endfor %}
     {{ reason_block('chose_alternative', 'Why swap? (optional)') }}
-    <div class="actions"><span class="spacer"></span><button class="primary" name="action" value="swap">Swap{{ ' in cart' if cart_line }}</button></div>
+    <div class="actions"><span class="spacer"></span>
+      <button name="action" value="substitute_with">Use as substitute</button>
+      <button class="primary" name="action" value="swap">Swap{{ ' in cart' if cart_line }}</button></div>
   </section>
 
   <section class="card">

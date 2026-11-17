@@ -192,6 +192,9 @@ class Selection(Base):
     quantity: Mapped[float] = mapped_column(Float, default=1)
     suggested_quantity: Mapped[float | None] = mapped_column(Float)  # what the agent proposed, before user edits
     added_by: Mapped[str] = mapped_column(String(16), default="agent")  # agent | user
+    substitution_allowed: Mapped[bool] = mapped_column(Boolean, default=False)  # may the shopper substitute?
+    substitution_note: Mapped[str | None] = mapped_column(Text)  # instructions for the shopper ("any brand, same size")
+    substitute_product_id: Mapped[str | None] = mapped_column(String(64))  # a specific replacement, if chosen
     status: Mapped[str] = mapped_column(String(16), default=SEL_PENDING, index=True)
     requirement: Mapped[str | None] = mapped_column(String(128))
     rationale: Mapped[str | None] = mapped_column(Text)
@@ -334,6 +337,8 @@ class PastOrderLine(Base):
     fulfilled: Mapped[bool] = mapped_column(Boolean, default=True)  # False: billed nothing (unavailable)
     is_fee: Mapped[bool] = mapped_column(Boolean, default=False)  # delivery fee / tip pseudo-products
     selection_id: Mapped[str | None] = mapped_column(ForeignKey("selections.id"))  # the run item that suggested it
+    substitution_allowed: Mapped[bool | None] = mapped_column(Boolean)
+    substituted_with: Mapped[str | None] = mapped_column(String(256))  # what the shopper substituted, if anything
 
     order: Mapped[PastOrder] = relationship(back_populates="lines")
     product: Mapped[Product | None] = relationship()

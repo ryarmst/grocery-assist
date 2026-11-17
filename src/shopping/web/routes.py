@@ -221,12 +221,16 @@ def triage_page(request: Request, run_id: str, skipped: str = ""):
 @router.post("/runs/{run_id}/selections/{sel_id}/triage")
 async def triage_submit(run_id: str, sel_id: str, decision: str = Form(...), option: str = Form(""), tags: list[str] = Form([]),
                         note: str = Form(""), rule: str = Form(""), quantity: float | None = Form(None), return_to: str = Form("run"),
-                        skipped: str = Form("")):
+                        skipped: str = Form(""), sub_allowed: str = Form(""), sub_note: str = Form("")):
     msg = err = None
     with session_scope() as session:
         try:
             if decision == "keep" and option and option != sel_id:
                 decision = "choose"
+            if decision in ("keep", "choose"):
+                # Substitution preference for the item being kept (recorded as feedback if it differs from the agent's).
+                await service.set_substitution(session, context.client(), selection_id=option if decision == "choose" else sel_id,
+                                               allowed=bool(sub_allowed), note=sub_note, in_cart=False)
             # Only keep tags that fit the decision actually taken (the form shows all chip groups).
             action = {"keep": "approved", "remove": "removed", "choose": "chose_alternative"}.get(decision, "")
             tags = [t for t in tags if t in FEEDBACK_TAGS.get(action, {}) or t == "other"]
@@ -353,11 +357,20 @@ async def modify_from_run(request: Request, run_id: str, sel_id: str, q: str | N
 @router.post("/modify")
 async def modify_submit(action: str = Form(...), product_id: str = Form(...), selection_id: str = Form(""), back: str = Form("/cart"),
                         new_product_id: str = Form(""), quantity: float | None = Form(None), tags: list[str] = Form([]),
-                        note: str = Form(""), rule: str = Form(""), in_cart: str = Form("")):
+                        note: str = Form(""), rule: str = Form(""), in_cart: str = Form(""),
+                        sub_allowed: str = Form(""), sub_note: str = Form("")):
     if not back.startswith("/"):
         back = "/cart"
     with session_scope() as session:
         try:
+            if action in ("substitution", "substitute_with"):
+                if action == "substitute_with" and not new_product_id:
+                    raise service.ShoppingError("Pick a product in the list to use as the substitute.")
+                msg = await service.set_substitution(
+                    session, context.client(), selection_id=selection_id or None, product_id=product_id,
+                    allowed=bool(sub_allowed) or action == "substitute_with", note=sub_note,
+                    substitute_product_id=new_product_id if action == "substitute_with" else None, in_cart=bool(in_cart))
+                return _back(back, msg=msg)
             msg = await mod.modify(session, context.client(), action=action, product_id=product_id, selection_id=selection_id or None,
                                    new_product_id=new_product_id or None, quantity=quantity, tags=tags, note=note, rule=rule or None,
                                    in_cart=bool(in_cart))
@@ -592,6 +605,18 @@ async def cart_update(product_id: str, quantity: float = Form(...)):
         except (AuthRequired, RetailerError) as exc:
             return _back("/cart", err=str(exc))
     return _back("/cart", msg="Cart updated." if quantity > 0 else "Removed from cart.")
+
+
+@router.post("/cart/{product_id}/substitution")
+async def cart_substitution(product_id: str, allowed: str = Form("")):
+    with session_scope() as session:
+        sel = mod.linked_selection(session, product_id)
+        try:
+            msg = await service.set_substitution(session, context.client(), selection_id=sel.id if sel else None, product_id=product_id,
+                                                 allowed=bool(allowed), note=sel.substitution_note if sel else None, in_cart=True)
+        except (AuthRequired, RetailerError, service.ShoppingError) as exc:
+            return _back("/cart", err=str(exc))
+    return _back("/cart", msg=msg)
 
 
 # -- auth ------------------------------------------------------------------------------------

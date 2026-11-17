@@ -326,6 +326,18 @@ def detect_patterns(session: Session, rows: list[Feedback]) -> list[dict]:
                 f"“{items[0].requirement}” removed {len(items)}× because you had enough — suggested too often",
                 actionable=False)
 
+    subs: dict[tuple[str, bool], list[Feedback]] = defaultdict(list)
+    for r in rows:
+        if r.action == "substitution_changed" and r.requirement:
+            to = (json.loads(r.context or "{}").get("to") or {})
+            subs[(r.requirement.lower(), bool(to.get("allowed")))].append(r)
+    for (_, allowed), items in subs.items():
+        if len(items) >= 2:
+            line = "Subs: OK" + (f" — {items[-1].note}" if items[-1].note else "") if allowed else "Subs: never"
+            add("substitution", items[0].requirement, None, None, [i.id for i in items],
+                f"You set substitutions {'on' if allowed else 'off'} for “{items[0].requirement}” {len(items)}× — "
+                f"add “{line}” to its Shopping Preferences in Notion", actionable=False)
+
     out.sort(key=lambda p: -p["evidence"])
     return out
 
@@ -472,6 +484,8 @@ def requirement_history(session: Session, names: list[str], *, default_cadence_d
                 "date": last_skip.created_at.date().isoformat(), "tags": last_skip.tags, "note": last_skip.note,
             },
             "preferred_product": None if not pref else {"product_id": pref.target, "product": pref.target_label},
+            "last_substitution": next(({"allowed": s.substitution_allowed, "note": s.substitution_note}
+                                       for s in reversed(sels) if s.status in ("approved", "applied")), None),
         })
     return out
 

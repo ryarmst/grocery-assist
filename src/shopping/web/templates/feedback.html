@@ -47,7 +47,7 @@ rules, app features, or changes to the shopping skill. The agent can read these 
   <label>Action
     <select name="action">
       <option value="">Any</option>
-      {% for a in ['removed', 'chose_alternative', 'approved', 'quantity_changed', 'note'] %}<option value="{{ a }}" {{ 'selected' if f.action == a }}>{{ a.replace('_', ' ') }}</option>{% endfor %}
+      {% for a in ['removed', 'chose_alternative', 'approved', 'quantity_changed', 'substitution_changed', 'note'] %}<option value="{{ a }}" {{ 'selected' if f.action == a }}>{{ a.replace('_', ' ') }}</option>{% endfor %}
     </select>
   </label>
   <label>Reason

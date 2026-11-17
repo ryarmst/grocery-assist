@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import logging
 from collections import defaultdict
 from datetime import datetime, timedelta, timezone
@@ -35,7 +36,7 @@ from shopping.models import (
     utcnow,
 )
 from shopping.retailer.client import PCExpressClient, RetailerError
-from shopping.retailer.normalize import NormalizedProduct, round2
+from shopping.retailer.normalize import NormalizedProduct, SubstitutionSpec, round2
 
 log = logging.getLogger(__name__)
 LOCAL_TZ = ZoneInfo("America/Toronto")
@@ -296,7 +297,9 @@ def _clean_reasons(reasons: list[str] | None) -> list[str]:
 
 async def _stage_selection(session: Session, client: PCExpressClient, run: ShoppingRun, *, product_id: str, quantity: float,
                            reasons: list[str] | None, rationale: str | None, requirement: str | None,
-                           group: ChoiceGroup | None, position: int, added_by: str = "agent") -> Selection:
+                           group: ChoiceGroup | None, position: int, added_by: str = "agent",
+                           substitution_allowed: bool = False, substitution_note: str | None = None,
+                           substitute_product_id: str | None = None) -> Selection:
     if quantity <= 0:
         raise ShoppingError("Quantity must be positive.")
     reasons = _clean_reasons(reasons)
@@ -316,6 +319,8 @@ async def _stage_selection(session: Session, client: PCExpressClient, run: Shopp
     sel = Selection(
         product_id=obs.product_id, price_observation_id=obs.id, quantity=quantity, suggested_quantity=quantity,
         added_by=added_by, status=SEL_PENDING,
+        substitution_allowed=bool(substitution_allowed or substitute_product_id),
+        substitution_note=(substitution_note or "").strip()[:250] or None, substitute_product_id=substitute_product_id or None,
         requirement=requirement or (group.label if group else None), rationale=rationale, reason_codes=reasons, position=position,
     )
     run.selections.append(sel)  # attach via relationships so in-session collections stay current
@@ -331,11 +336,15 @@ def _next_position(run: ShoppingRun) -> int:
 
 
 async def add_selection(session: Session, client: PCExpressClient, run_id: str, *, product_id: str, quantity: float = 1,
-                        reasons: list[str] | None = None, rationale: str | None = None, requirement: str | None = None) -> Selection:
+                        reasons: list[str] | None = None, rationale: str | None = None, requirement: str | None = None,
+                        substitution_allowed: bool = False, substitution_note: str | None = None,
+                        substitute_product_id: str | None = None) -> Selection:
     run = get_run(session, run_id)
     _require_editable(run)
     sel = await _stage_selection(session, client, run, product_id=product_id, quantity=quantity, reasons=reasons,
-                                 rationale=rationale, requirement=requirement, group=None, position=_next_position(run))
+                                 rationale=rationale, requirement=requirement, group=None, position=_next_position(run),
+                                 substitution_allowed=substitution_allowed, substitution_note=substitution_note,
+                                 substitute_product_id=substitute_product_id)
     _after_agent_change(run)
     return sel
 
@@ -356,7 +365,9 @@ async def add_choice_group(session: Session, client: PCExpressClient, run_id: st
         if i != recommended_index and "alternative" not in reasons:
             reasons.append("alternative")
         sel = await _stage_selection(session, client, run, product_id=opt["product_id"], quantity=float(opt.get("quantity", 1)),
-                                     reasons=reasons, rationale=opt.get("rationale"), requirement=label, group=group, position=i)
+                                     reasons=reasons, rationale=opt.get("rationale"), requirement=label, group=group, position=i,
+                                     substitution_allowed=bool(opt.get("substitution_allowed")),
+                                     substitution_note=opt.get("substitution_note"), substitute_product_id=opt.get("substitute_product_id"))
         if i == recommended_index:
             group.recommended_selection_id = sel.id
             group.selected_selection_id = sel.id
@@ -366,7 +377,8 @@ async def add_choice_group(session: Session, client: PCExpressClient, run_id: st
 
 
 def update_selection(session: Session, selection_id: str, *, quantity: float | None = None, rationale: str | None = None,
-                     reasons: list[str] | None = None, withdraw: bool = False) -> Selection:
+                     reasons: list[str] | None = None, withdraw: bool = False, substitution_allowed: bool | None = None,
+                     substitution_note: str | None = None, substitute_product_id: str | None = None) -> Selection:
     """Agent-side edits. Only pending selections can be changed; the agent cannot approve."""
     sel = session.get(Selection, selection_id)
     if sel is None:
@@ -382,6 +394,14 @@ def update_selection(session: Session, selection_id: str, *, quantity: float | N
         sel.rationale = rationale
     if reasons is not None:
         sel.reason_codes = _clean_reasons(reasons)
+    if substitution_allowed is not None:
+        sel.substitution_allowed = substitution_allowed
+    if substitution_note is not None:
+        sel.substitution_note = substitution_note.strip()[:250] or None
+    if substitute_product_id is not None:
+        sel.substitute_product_id = substitute_product_id or None
+        if substitute_product_id:
+            sel.substitution_allowed = True
     if withdraw:
         sel.status = SEL_REJECTED
         sel.rejected_at = utcnow()
@@ -583,8 +603,11 @@ async def apply_approved(session: Session, client: PCExpressClient, run_id: str,
                             price_at_action=sels[0].observation.effective_price if sels[0].observation else None,
                             upstream_reference=cart.cart_id)
         try:
-            if target != before:
-                cart = await client.set_cart_quantity(rid, target)
+            spec = await substitution_spec(client, sels[0])
+            line = next((l for l in cart.lines if l.product_id == rid), None)
+            sub_differs = line is None or line.substitution_allowed != spec.allowed or bool(spec.comment) or spec.substitute is not None
+            if target != before or sub_differs:
+                cart = await client.set_cart_quantity(rid, target, substitution=spec)
             action.success = True
             for s in sels:
                 s.status, s.applied_to_cart_at, s.last_error = SEL_APPLIED, utcnow(), None
@@ -604,6 +627,62 @@ async def apply_approved(session: Session, client: PCExpressClient, run_id: str,
     ok = sum(1 for r in results if r["ok"])
     errors = [r["error"] for r in results if not r["ok"]]
     return {"applied": ok, "failed": len(results) - ok, "results": results, "error": errors[0] if errors else None}
+
+
+async def substitution_spec(client: PCExpressClient, sel: Selection) -> SubstitutionSpec:
+    substitute = None
+    if sel.substitute_product_id:
+        try:
+            substitute = await client.get_product(sel.substitute_product_id)
+        except RetailerError:
+            substitute = None  # fall back to "substitutions OK" with the note
+    return SubstitutionSpec(allowed=bool(sel.substitution_allowed), comment=sel.substitution_note or "", substitute=substitute)
+
+
+async def set_substitution(session: Session, client: PCExpressClient, *, selection_id: str | None = None, product_id: str | None = None,
+                           allowed: bool, note: str | None = None, substitute_product_id: str | None = None,
+                           in_cart: bool = False, source: str = "user") -> str:
+    """User change of an item's substitution preference: on the run item, and in the cart if it's there.
+    A change from what the agent proposed is recorded as feedback."""
+    from shopping.models import Feedback  # local import: Feedback is defined after Selection
+
+    sel = session.get(Selection, selection_id) if selection_id else None
+    before = None
+    if sel is not None:
+        before = {"allowed": sel.substitution_allowed, "note": sel.substitution_note, "substitute": sel.substitute_product_id}
+        sel.substitution_allowed = bool(allowed or substitute_product_id)
+        sel.substitution_note = (note or "").strip()[:250] or None
+        sel.substitute_product_id = substitute_product_id or None
+        product_id = sel.product.retailer_product_id
+        in_cart = in_cart or sel.status == SEL_APPLIED
+    after = {"allowed": bool(allowed or substitute_product_id), "note": (note or "").strip() or None, "substitute": substitute_product_id or None}
+    if in_cart and product_id:
+        spec = SubstitutionSpec(allowed=after["allowed"], comment=after["note"] or "",
+                                substitute=(await client.get_product(substitute_product_id)) if substitute_product_id else None)
+        cart = await client.get_cart()
+        line = next((l for l in cart.lines if l.product_id == product_id), None)
+        product = _product_from_cart_line(session, line) if line else None
+        action = CartAction(retailer_product_id=product_id, product_id=product.id if product else None, product_label=product_label(product),
+                            action="substitution", source=source, quantity_before=line.quantity if line else None,
+                            quantity_after=line.quantity if line else None, upstream_reference=cart.cart_id,
+                            shopping_run_id=sel.shopping_run_id if sel else None, selection_id=sel.id if sel else None)
+        try:
+            await client.set_cart_substitution(product_id, spec)
+            action.success = True
+        except Exception as exc:  # noqa: BLE001
+            action.error = str(exc)[:500]
+            raise
+        finally:
+            session.add(action)
+            session.flush()
+    if before is not None and before != after:
+        product = sel.product
+        session.add(Feedback(action="substitution_changed", shopping_run_id=sel.shopping_run_id, selection_id=sel.id,
+                             product_id=product.id, requirement=sel.requirement, tags=[], note=after["note"],
+                             context=json.dumps({"from": before, "to": after})))
+        session.flush()
+    state = "allowed" if after["allowed"] else "off"
+    return f"Substitutions {state}" + (f" — “{after['note']}”" if after["note"] else "") + (" (in the cart too)." if in_cart else ".")
 
 
 def _product_from_cart_line(session: Session, line) -> Product:
@@ -665,6 +744,9 @@ def selection_dict(session: Session, sel: Selection, *, with_history: bool = Fal
         "unit_price": round(float(obs.unit_price), 4) if obs and obs.unit_price is not None else None,
         "unit_price_basis": obs.unit_price_basis if obs else None,
         "deal": obs.deal_text if obs else None,
+        "substitution_allowed": sel.substitution_allowed,
+        "substitution_note": sel.substitution_note,
+        "substitute_product_id": sel.substitute_product_id,
         "last_error": sel.last_error,
     }
     if with_history:

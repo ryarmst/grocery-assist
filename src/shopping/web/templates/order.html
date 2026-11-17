@@ -24,7 +24,8 @@
   {% for i in o['items'] %}
   <tr class="{{ '' if i.fulfilled else 'muted' }}">
     <td>{{ i.brand or '' }} <a href="/history/{{ i.product_id }}">{{ i.name }}</a> <span class="muted small">{{ i.size or '' }}</span>
-      {% if not i.fulfilled %}<span class="status rejected">not fulfilled</span>{% endif %}</td>
+      {% if not i.fulfilled %}<span class="status rejected">not fulfilled</span>{% endif %}
+      {% if i.substituted_with %}<span class="badge sub">substituted → {{ i.substituted_with }}</span>{% elif i.substitution_allowed %}<span class="small muted">subs OK</span>{% endif %}</td>
     <td class="num">{{ i.quantity }}</td>
     <td class="num small">{{ i.unit_price | money }}{% if i.per == 'kg' %}/kg{% endif %}</td>
     <td class="num">{{ i.total | money }}</td>
