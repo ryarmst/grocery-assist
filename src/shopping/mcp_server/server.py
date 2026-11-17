@@ -21,9 +21,10 @@ from shopping import context
 from shopping.auth.session import AuthRequired
 from shopping.config import settings
 from shopping.core import feedback as fbk
+from shopping.core import orders as ords
 from shopping.core import service
 from shopping.database import session_scope
-from shopping.models import REASON_CODES, ShoppingRun
+from shopping.models import REASON_CODES, PastOrder, ShoppingRun
 from shopping.retailer.client import RetailerError
 
 log = logging.getLogger("shopping.mcp")
@@ -392,6 +393,36 @@ async def shopping_mark_feedback_reviewed(
     so later syncs with unreviewed_only=true don't process them twice."""
     with session_scope() as session:
         return {"marked": fbk.mark_reviewed(session, feedback_ids, resolution)}
+
+
+# -------------------------------------------------------------------------------------
+# Past orders (what was actually bought)
+# -------------------------------------------------------------------------------------
+
+@mcp.tool()
+@logged
+async def shopping_get_past_orders(limit: Annotated[int, Field(ge=1, le=50)] = 10) -> dict:
+    """Recent placed orders from the user's No Frills account (newest first), and whether each has been
+    imported. Needs the retailer session."""
+    summaries = await context.client().list_past_orders()
+    with session_scope() as session:
+        imported = {o.id for o in session.scalars(select(PastOrder.id))}
+        return {"orders": [{**ords.summary_dict(s, None), "imported": s.order_id in imported} for s in summaries[:limit]]}
+
+
+@mcp.tool()
+@logged
+async def shopping_get_past_order(order_id: Annotated[str, Field(description="Order number from shopping_get_past_orders")]) -> dict:
+    """One placed order: every item actually bought (quantity or weight, price paid), which run item
+    suggested it, items approved in the app but not bought (removed at checkout), and items added on
+    nofrills.ca outside the app. Importing it records the purchases and prices paid in history, which
+    also makes shopping_get_requirement_history reflect real purchases."""
+    client = context.client()
+    summaries = await client.list_past_orders()
+    data = await client.get_past_order(order_id)
+    with session_scope() as session:
+        order = ords.import_order(session, data, next((s for s in summaries if s.order_id == order_id), None), store_id=settings.store_id)
+        return ords.order_view(session, order)
 
 
 def tool_names() -> list[str]:

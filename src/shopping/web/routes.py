@@ -19,6 +19,7 @@ from shopping.config import settings
 from shopping.core import activity as act
 from shopping.core import feedback as fbk
 from shopping.core import modify as mod
+from shopping.core import orders as ords
 from shopping.core import service
 from shopping.database import session_scope
 from shopping.models import (
@@ -27,6 +28,7 @@ from shopping.models import (
     PREFERENCE_KINDS,
     REASON_CODES,
     Feedback,
+    PastOrder,
     Preference,
     PriceObservation,
     Product,
@@ -498,6 +500,69 @@ def edit_pref(pref_id: int, scope: str = Form(""), note: str = Form(""), weight:
         if pref:
             pref.scope, pref.note, pref.weight = scope.strip() or None, note.strip() or None, weight
     return _back("/history/rules", msg="Rule updated.")
+
+
+# -- past orders -----------------------------------------------------------------------------
+
+async def _order_summaries() -> tuple[list, str | None]:
+    if not _connected():
+        return [], "Connect your No Frills session (Auth) to load your order history."
+    try:
+        return await context.client().list_past_orders(), None
+    except (AuthRequired, RetailerError) as exc:
+        return [], str(exc)
+
+
+async def _import(session, order_id: str, summaries) -> PastOrder:
+    data = await context.client().get_past_order(order_id)
+    summary = next((s for s in summaries if s.order_id == order_id), None)
+    return ords.import_order(session, data, summary, store_id=settings.store_id)
+
+
+@router.get("/orders", response_class=HTMLResponse)
+async def orders_page(request: Request):
+    summaries, error = await _order_summaries()
+    with session_scope() as session:
+        imported = {o.id: o for o in session.scalars(select(PastOrder).order_by(PastOrder.placed_at.desc()))}
+        rows = [ords.summary_dict(s, imported.get(s.order_id)) for s in summaries]
+        if not rows:  # offline: show what was imported earlier
+            rows = [{"order_id": o.id, "placed_at": o.placed_at.isoformat() if o.placed_at else None, "total": float(o.total) if o.total is not None else None,
+                     "store": o.store, "fulfillment": o.fulfillment, "imported": True} for o in imported.values()]
+        return templates.TemplateResponse(request, "orders.html", {"rows": rows, "error": error, **_auth_ctx()})
+
+
+@router.post("/orders/import")
+async def orders_import():
+    summaries, error = await _order_summaries()
+    if error:
+        return _back("/orders", err=error)
+    n = 0
+    with session_scope() as session:
+        for s in summaries:
+            try:
+                await _import(session, s.order_id, summaries)
+                n += 1
+            except (AuthRequired, RetailerError) as exc:
+                return _back("/orders", msg=f"Imported {n} order(s).", err=str(exc))
+    return _back("/orders", msg=f"Imported {n} order(s) — purchases and prices paid are now in History.")
+
+
+@router.get("/orders/{order_id}", response_class=HTMLResponse)
+async def order_page(request: Request, order_id: str):
+    error = None
+    with session_scope() as session:
+        if _connected():
+            summaries, error = await _order_summaries()
+            try:
+                order = await _import(session, order_id, summaries)
+            except (AuthRequired, RetailerError) as exc:
+                error, order = str(exc), session.get(PastOrder, order_id)
+        else:
+            order = session.get(PastOrder, order_id)
+            error = None if order else "Connect your No Frills session (Auth) to load this order."
+        if order is None:
+            return templates.TemplateResponse(request, "order.html", {"o": None, "error": error or "Order not found.", **_auth_ctx()})
+        return templates.TemplateResponse(request, "order.html", {"o": ords.order_view(session, order), "error": error, **_auth_ctx()})
 
 
 # -- cart ------------------------------------------------------------------------------------

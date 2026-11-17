@@ -398,3 +398,101 @@ def cart_from_response(data: dict) -> Cart:
                 )
             )
     return Cart(cart.get("id") or "", store_id, store_name, lines, subtotal, est, disc)
+
+
+# ---------------------------------------------------------------------------------------
+# Past orders (order history)
+# ---------------------------------------------------------------------------------------
+
+_FEE_RE = re.compile(r"\b(TIP|PD ORDER|WAIVE|FEE|CHARGE)\b")
+
+
+@dataclass
+class PastOrderSummary:
+    order_id: str
+    placed_at: str | None
+    total: float | None
+    store: str | None
+    fulfillment: str | None
+    order_type: str | None
+
+
+@dataclass
+class PastOrderLineData:
+    product_id: str
+    name: str
+    brand: str | None
+    size: str | None
+    quantity: float | None
+    weight_kg: float | None
+    unit_price: Decimal | None  # per item, or per kg for weighed items
+    total: Decimal | None
+    fulfilled: bool
+    is_fee: bool
+    weighted: bool
+    image_url: str | None = None
+    link: str | None = None
+
+
+@dataclass
+class PastOrderData:
+    order_id: str
+    subtotal: Decimal | None
+    tax: Decimal | None
+    total: Decimal | None
+    points_earned: float | None
+    lines: list[PastOrderLineData]
+
+
+def past_orders_from_history(data: dict) -> list[PastOrderSummary]:
+    return [
+        PastOrderSummary(order_id=str(o.get("id")), placed_at=o.get("placed"), total=o.get("total"), store=o.get("store"),
+                         fulfillment=o.get("fulfillmentType"), order_type=o.get("orderType"))
+        for o in data.get("orderHistory") or [] if o.get("id")
+    ]
+
+
+def past_order_from_detail(data: dict) -> PastOrderData:
+    od = data.get("orderDetails") or {}
+    lines: list[PastOrderLineData] = []
+    for e in od.get("entries") or []:
+        p = e.get("product") or {}
+        name = (p.get("productName") or p.get("name") or "").strip()
+        weighted = bool(p.get("isWeighted") or p.get("weighted") or e.get("weight"))
+        unit = money(e.get("unitPrice"))
+        total = money(e.get("totalPrice"))
+        qty = e.get("quantity") or 0
+        weight = e.get("weight") or 0
+        if weighted:
+            quantity, weight_kg = None, (float(weight) or None)
+        else:
+            # A few lines report quantity 0 but still bill; infer the count from the line total.
+            quantity = float(qty) if qty else (float(round(total / unit)) if unit and total else None)
+            weight_kg = None
+        fulfilled = not (not qty and not weight and not total)
+        lines.append(PastOrderLineData(
+            product_id=p.get("id") or "", name=name, brand=p.get("brand") or None, size=p.get("productTitleSizeDetail") or None,
+            quantity=quantity, weight_kg=weight_kg, unit_price=unit, total=total, fulfilled=fulfilled,
+            is_fee=bool(name.isupper() and _FEE_RE.search(name)), weighted=weighted,
+            image_url=p.get("primaryImage"), link=p.get("link"),
+        ))
+    return PastOrderData(order_id=str(od.get("orderNumber") or ""), subtotal=money(od.get("subTotal")), tax=money(od.get("totalTax")),
+                         total=money(od.get("totalPriceWithTax") or od.get("totalPrice")), points_earned=data.get("pointsEarned"), lines=lines)
+
+
+def observation_from_order_line(line: PastOrderLineData) -> NormalizedProduct | None:
+    """What was actually paid, as a price observation (skips fees and unfulfilled lines)."""
+    if line.is_fee or not line.fulfilled or not line.product_id:
+        return None
+    if line.weighted:
+        p = NormalizedProduct(retailer_product_id=line.product_id, name=line.name, brand=line.brand, sold_by="each_priced_by_weight",
+                              effective_price=line.total, regular_price=line.total, image_url=line.image_url, link=line.link)
+        if line.unit_price:
+            _finish_pricing(p, f"${line.unit_price}/1kg", None)
+        if line.weight_kg:
+            p.size_value, p.size_unit, p.size_estimated = (Decimal(str(line.weight_kg)) * 1000).quantize(Decimal("1")), "g", False
+        return p
+    p = NormalizedProduct(retailer_product_id=line.product_id, name=line.name, brand=line.brand, effective_price=line.unit_price,
+                          regular_price=line.unit_price, image_url=line.image_url, link=line.link)
+    _finish_pricing(p, line.size, None)
+    return p

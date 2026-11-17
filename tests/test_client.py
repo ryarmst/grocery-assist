@@ -28,7 +28,7 @@ def make_client(tmp_path, handler) -> tuple[PCExpressClient, AuthSession]:
 def test_no_generic_request_surface():
     public = [n for n in dir(PCExpressClient) if not n.startswith("_")]
     assert sorted(public) == sorted(
-        ["MIN_INTERVAL_SECONDS", "RETRY_DELAYS", "aclose", "get_cart", "get_deals", "get_product", "remove_cart_item", "search_products", "set_cart_quantity"]
+        ["MIN_INTERVAL_SECONDS", "RETRY_DELAYS", "aclose", "get_cart", "get_deals", "get_past_order", "get_product", "list_past_orders", "remove_cart_item", "search_products", "set_cart_quantity"]
     )
 
 

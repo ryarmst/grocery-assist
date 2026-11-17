@@ -298,6 +298,48 @@ class Feedback(Base):
     chosen_product: Mapped[Product | None] = relationship(foreign_keys=[chosen_product_id])
 
 
+class PastOrder(Base):
+    """A placed order imported from the retailer's order history — what was actually bought."""
+
+    __tablename__ = "past_orders"
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True)  # retailer order number
+    placed_at: Mapped[datetime | None] = mapped_column(UTCDateTime, index=True)
+    store: Mapped[str | None] = mapped_column(String(128))
+    fulfillment: Mapped[str | None] = mapped_column(String(32))
+    subtotal: Mapped[Decimal | None] = mapped_column(DecimalText)
+    tax: Mapped[Decimal | None] = mapped_column(DecimalText)
+    total: Mapped[Decimal | None] = mapped_column(DecimalText)
+    points_earned: Mapped[float | None] = mapped_column(Float)
+    imported_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow)
+
+    lines: Mapped[list[PastOrderLine]] = relationship(back_populates="order", order_by="PastOrderLine.position", cascade="all, delete-orphan")
+
+
+class PastOrderLine(Base):
+    __tablename__ = "past_order_lines"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    order_id: Mapped[str] = mapped_column(ForeignKey("past_orders.id"), index=True)
+    position: Mapped[int] = mapped_column(Integer, default=0)
+    product_id: Mapped[int | None] = mapped_column(ForeignKey("products.id"), index=True)
+    retailer_product_id: Mapped[str] = mapped_column(String(64), index=True)
+    name: Mapped[str] = mapped_column(String(256))
+    brand: Mapped[str | None] = mapped_column(String(128))
+    size: Mapped[str | None] = mapped_column(String(64))
+    quantity: Mapped[float | None] = mapped_column(Float)  # count, for items sold each
+    weight_kg: Mapped[float | None] = mapped_column(Float)  # for weighed items
+    unit_price: Mapped[Decimal | None] = mapped_column(DecimalText)  # per item, or per kg when weighed
+    total: Mapped[Decimal | None] = mapped_column(DecimalText)
+    fulfilled: Mapped[bool] = mapped_column(Boolean, default=True)  # False: billed nothing (unavailable)
+    is_fee: Mapped[bool] = mapped_column(Boolean, default=False)  # delivery fee / tip pseudo-products
+    selection_id: Mapped[str | None] = mapped_column(ForeignKey("selections.id"))  # the run item that suggested it
+
+    order: Mapped[PastOrder] = relationship(back_populates="lines")
+    product: Mapped[Product | None] = relationship()
+    selection: Mapped[Selection | None] = relationship()
+
+
 class AppSetting(Base):
     __tablename__ = "app_settings"
 

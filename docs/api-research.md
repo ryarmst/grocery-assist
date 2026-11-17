@@ -161,6 +161,26 @@ All cart calls need `authorization: Bearer <AccessToken>` + `is-helios-account: 
 
 Fixtures: `cart_empty.json`, `cart_populated.json`, `cart_update.json`.
 
+## Order history (read-only)
+
+Authenticated GETs (bearer token as for the cart):
+
+| Operation | Request |
+|---|---|
+| Current/live orders | `GET /v1/ecommerce/v2/nofrills/customers/orders?status=SUBMITTED,READY_FOR_ACTION,READY_FOR_PICK_UP,COMPLETED` → `{"orders": [...]}` |
+| Past orders | `GET /v1/ecommerce/v2/nofrills/customers/historical-orders` → `{onlineOrdersCount, offlineOrdersCount, orderHistory: [{id, placed, total, store, fulfillmentType, orderType}]}` (all banners: No Frills, Loblaws, Superstore…) |
+| One past order | `GET /v1/ecommerce/v2/nofrills/customers/historical-orders/{orderNumber}` (~80 KB) |
+
+Order detail: top level `pointsEarned`, `pointsRedeemed`, `orderDetails`. `orderDetails`:
+`orderNumber`, `subTotal`, `totalTax`, `totalPriceWithTax`, `totalItems`, `entries[]`, plus personal data
+(`shippingAddress`, `user`, `paymentInfo`, `booking.pickupLocation`, `comment`) that the app never stores.
+Each entry: `quantity`, `weight` (kg, for weighed items, with `quantity` 0), `unitPrice` (per kg when
+weighed), `totalPrice`, `totalPriceWithoutDiscount`, and `product` (`id`, `productName`, `brand`,
+`productTitleSizeDetail`, `isWeighted`, `primaryImage`, `link`). Quirks: unfulfilled items have quantity 0,
+weight 0 and total 0; a few billed lines report quantity 0 (infer from total ÷ unit price); delivery fee,
+fee waiver and tip appear as pseudo-products (`PD ORDER`, `WAIVE PD ORDER`, `$3 DRIVER TIP`).
+The order page on the website is `https://www.nofrills.ca/en/order-dashboard/past-order/{orderNumber}`.
+
 ## Cart merge
 
 On login the site:

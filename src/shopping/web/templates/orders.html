@@ -1,0 +1,29 @@
+{% extends "base.html" %}
+{% block title %}Orders{% endblock %}
+{% block content %}
+<div class="run-head">
+  <h1>Past orders</h1>
+  {% if rows %}<form class="inline" method="post" action="/orders/import"><button>Import all</button></form>{% endif %}
+</div>
+<p class="muted small">What you actually bought, from your No Frills account. Opening an order imports it: its items and the prices you paid go into History, and items are matched to the shopping runs that suggested them.</p>
+{% if error %}<div class="flash err">{{ error }}</div>{% endif %}
+{% if rows %}
+<div class="table-wrap"><table>
+  <thead><tr><th>Placed</th><th>Order</th><th>Store</th><th>Type</th><th class="num">Total</th><th></th></tr></thead>
+  <tbody>
+  {% for r in rows %}
+  <tr>
+    <td class="small">{{ (r.placed_at or '')[:10] }}</td>
+    <td><a href="/orders/{{ r.order_id }}">{{ r.order_id }}</a></td>
+    <td class="small">{{ r.store or '' }}</td>
+    <td class="small">{{ (r.fulfillment or '') | lower }}</td>
+    <td class="num">{{ r.total | money }}</td>
+    <td>{% if r.imported %}<span class="status applied">imported</span>{% endif %}</td>
+  </tr>
+  {% endfor %}
+  </tbody>
+</table></div>
+{% elif not error %}
+<div class="empty">No orders yet.</div>
+{% endif %}
+{% endblock %}

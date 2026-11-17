@@ -14,7 +14,7 @@
       {% if e.reasons_text %}<br><strong>Why:</strong> {{ e.reasons_text }}{% endif %}
       {% if e.note %}<br><span class="muted">“{{ e.note }}”</span>{% endif %}
     </td>
-    <td class="small">{% if e.run_id %}<a href="/runs/{{ e.run_id }}">{{ e.run or 'run' }}</a>{% endif %}</td>
+    <td class="small">{% if e.order_id %}<a href="/orders/{{ e.order_id }}">order</a>{% if e.run_id %} · {% endif %}{% endif %}{% if e.run_id %}<a href="/runs/{{ e.run_id }}">{{ e.run or 'run' }}</a>{% endif %}</td>
   </tr>
   {% endfor %}
   </tbody>

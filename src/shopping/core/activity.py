@@ -10,7 +10,7 @@ from sqlalchemy.orm import Session
 
 from shopping.core.feedback import feedback_dict
 from shopping.core.service import product_label
-from shopping.models import PREFERENCE_KINDS, CartAction, Feedback, Preference, Product, Selection, utcnow
+from shopping.models import PREFERENCE_KINDS, CartAction, Feedback, PastOrder, Preference, Product, Selection, utcnow
 
 KINDS = {
     "suggested": "Suggested",
@@ -20,6 +20,7 @@ KINDS = {
     "cart": "Cart change",
     "note": "Note",
     "rule": "Rule saved",
+    "purchased": "Bought",
 }
 
 
@@ -94,6 +95,23 @@ def activity(session: Session, *, days: int = 30, kind: str | None = None, q: st
                        "product_id": p.target if p.target and "_" in p.target else None,
                        "detail": PREFERENCE_KINDS.get(p.kind, p.kind) + (f" (for {p.scope})" if p.scope else "") + ("" if p.active else " · inactive"),
                        "note": p.note})
+
+    if not run_id:
+        for order in session.scalars(select(PastOrder).where(PastOrder.placed_at >= since)):
+            lines = [l for l in order.lines if not l.is_fee and l.fulfilled]
+            if product_id:
+                for l in lines:
+                    if l.retailer_product_id == product_id:
+                        qty = f"{l.weight_kg:g} kg" if l.weight_kg else f"×{l.quantity:g}" if l.quantity else ""
+                        events.append({"time": order.placed_at, "kind": "purchased", "title": "Bought", "product": l.name,
+                                       "product_id": l.retailer_product_id, "order_id": order.id,
+                                       "detail": f"{qty}" + (f" for ${l.total:.2f}" if l.total is not None else "") + f" · order {order.id}",
+                                       "run_id": l.selection.shopping_run_id if l.selection else None})
+            else:
+                from_runs = sum(1 for l in lines if l.selection_id)
+                events.append({"time": order.placed_at, "kind": "purchased", "title": "Order placed", "product": order.store,
+                               "order_id": order.id,
+                               "detail": (f"${order.total:.2f} · " if order.total is not None else "") + f"{len(lines)} items · {from_runs} from runs"})
 
     if kind:
         events = [e for e in events if e["kind"] == kind]

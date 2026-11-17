@@ -9,6 +9,7 @@ changes. Requirement history ("when did we last buy milk?") supports regular pur
 from __future__ import annotations
 
 import json
+import re
 from collections import Counter, defaultdict
 from datetime import timedelta
 
@@ -375,10 +376,37 @@ def feedback_by_product(session: Session, retailer_ids: list[str]) -> dict[str, 
 # Requirement history (regular purchases)
 # -------------------------------------------------------------------------------------
 
+def _name_matches(requirement_key: str, line_name: str) -> bool:
+    """'broccoli' matches 'Broccoli Crown'; 'avocados' matches 'Avocado Bag'; whole words only."""
+    words = re.findall(r"[a-z]+", line_name.lower())
+    text = " " + " ".join(words) + " "
+    key_words = re.findall(r"[a-z]+", requirement_key)
+    if not key_words:
+        return False
+    variants = {" ".join(key_words)}
+    last = key_words[-1]
+    for cut in ("es", "s"):
+        if last.endswith(cut) and len(last) > len(cut) + 2:
+            variants.add(" ".join(key_words[:-1] + [last[: -len(cut)]]))
+    return any(f" {v} " in text or f" {v}s " in text for v in variants)
+
+
 def requirement_history(session: Session, names: list[str], *, default_cadence_days: int = 7) -> list[dict]:
-    """Buying history per requirement name (e.g. pantry item names flagged as regular purchases)."""
+    """Buying history per requirement name (e.g. pantry item names flagged as regular purchases).
+
+    Uses imported orders (what was actually bought) when available, and cart additions from runs
+    otherwise."""
+    from shopping.core.orders import purchases_for_products  # local import: orders builds on service
+    from shopping.models import PastOrder, PastOrderLine
+
     out = []
     now = utcnow()
+    # Product -> requirement it was suggested for, so a product staged for "Almond Milk" never counts as "Milk".
+    claimed = {pid: (req or "").lower() for pid, req in session.execute(select(Selection.product_id, Selection.requirement))}
+    all_lines = session.execute(
+        select(PastOrder.placed_at, PastOrderLine).join(PastOrderLine, PastOrderLine.order_id == PastOrder.id)
+        .where(PastOrderLine.fulfilled.is_(True), PastOrderLine.is_fee.is_(False), PastOrder.placed_at.is_not(None))
+    ).all()
     for name in names:
         key = name.strip().lower()
         if not key:
@@ -387,11 +415,21 @@ def requirement_history(session: Session, names: list[str], *, default_cadence_d
             select(Selection).where(func.lower(Selection.requirement) == key).order_by(Selection.created_at)
         ))
         added = [s for s in sels if s.status == SEL_APPLIED and s.applied_to_cart_at]
+        own_products = {s.product_id for s in sels}
+        purchases = purchases_for_products(session, own_products)
+        seen_lines = {l.id for _, l in purchases}
+        purchases += [(t, l) for t, l in all_lines if l.id not in seen_lines
+                      and claimed.get(l.product_id, key) == key and _name_matches(key, l.name)]
+        purchases.sort(key=lambda tl: tl[0])
+        buy_dates = sorted({t.date() for t, _ in purchases})
         add_dates = sorted({s.applied_to_cart_at.date() for s in added})
-        intervals = [(b - a).days for a, b in zip(add_dates, add_dates[1:]) if (b - a).days > 0]
+        dates = buy_dates if len(buy_dates) >= 2 else sorted(set(buy_dates) | set(add_dates))
+        intervals = [(b - a).days for a, b in zip(dates, dates[1:]) if (b - a).days > 0]
         typical = round(sum(intervals) / len(intervals)) if intervals else None
         last = added[-1] if added else None
-        days_since = (now - last.applied_to_cart_at).days if last else None
+        last_buy = purchases[-1] if purchases else None
+        last_time = max([t for t in [last.applied_to_cart_at if last else None, last_buy[0] if last_buy else None] if t], default=None)
+        days_since = (now - last_time).days if last_time else None
         skips = [f for f in session.scalars(
             select(Feedback).where(func.lower(Feedback.requirement) == key, Feedback.action == "removed").order_by(Feedback.created_at)
         )]
@@ -400,25 +438,33 @@ def requirement_history(session: Session, names: list[str], *, default_cadence_d
         pref = session.scalar(select(Preference).where(Preference.active.is_(True), Preference.kind == "prefer_for_type",
                                                       func.lower(Preference.scope) == key).order_by(Preference.created_at.desc()))
         cadence = typical or default_cadence_days
+        verb = "bought" if last_buy and last_buy[0] == last_time else "added to cart"
         if skipped_enough_recently:
             status, why = "not_due", f"skipped {last_skip.created_at.date()} — had enough"
-        elif last is None:
-            status, why = "unknown", "never bought through the app"
+        elif last_time is None:
+            status, why = "unknown", "no purchases or cart additions recorded yet"
         elif days_since >= cadence * 0.8:
-            status, why = "due", f"last added {days_since} days ago (typical {cadence})"
+            status, why = "due", f"last {verb} {days_since} days ago (typical {cadence})"
         else:
-            status, why = "not_due", f"last added {days_since} days ago (typical {cadence})"
+            status, why = "not_due", f"last {verb} {days_since} days ago (typical {cadence})"
         out.append({
             "requirement": name,
             "status": status,
             "why": why,
             "times_suggested": len(sels),
             "times_added_to_cart": len(added),
+            "times_purchased": len(buy_dates),
             "times_removed": len(skips),
             "last_added": None if not last else {
-                "date": last.applied_to_cart_at.date().isoformat(), "days_ago": days_since,
+                "date": last.applied_to_cart_at.date().isoformat(), "days_ago": (now - last.applied_to_cart_at).days,
                 "product_id": last.product.retailer_product_id, "product": _product_label(last.product), "quantity": last.quantity,
                 "price": None if not last.observation or last.observation.effective_price is None else float(last.observation.effective_price),
+            },
+            "last_purchased": None if not last_buy else {
+                "date": last_buy[0].date().isoformat(), "days_ago": (now - last_buy[0]).days, "order_id": last_buy[1].order_id,
+                "product_id": last_buy[1].retailer_product_id, "product": " ".join(x for x in [last_buy[1].brand, last_buy[1].name, last_buy[1].size] if x),
+                "quantity": f"{last_buy[1].weight_kg:g} kg" if last_buy[1].weight_kg else last_buy[1].quantity,
+                "price": None if last_buy[1].total is None else float(last_buy[1].total),
             },
             "typical_interval_days": typical,
             "typical_quantity": sorted(s.quantity for s in added)[len(added) // 2] if added else None,

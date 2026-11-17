@@ -66,6 +66,8 @@ doesn't track stock levels; treat its rows as hints. Ryan's message beats Notion
     (e.g. "3 lb" → one 3 lb bag, or two 1.36 kg bags if that's all there is; "2 dozen" eggs → 2×12).
     Say the conversion in the rationale ("list says 3 lb → 1×3 lb bag"). If empty, use the typical
     quantity from `shopping_get_selection_history`, else one package.
+- **What was bought last time:** if the latest order (`shopping_get_past_orders`) isn't imported yet,
+  import it first (`shopping_get_past_order`) so "due" reflects real purchases, not just the cart.
 - **Regular purchases:** pantry rows with `Regular Purchase?` checked (food types only; skip
   Utility/Supplement/Equipment unless Ryan asks). If meal-planner already put them on the Groceries
   list, they're covered above — give them both reasons, don't stage twice. For the rest, call
@@ -145,8 +147,17 @@ and later changes on each cart line's **Modify** page, all feed *Learning from r
 - Cart errors (expired session, No Frills outage): call `shopping_apply_approved` only when Ryan asks
   you to retry. On an auth error, point him to the `/auth` page (`shopping_auth_status` gives the URL) —
   never ask for tokens in chat.
-- Only after Ryan says the order is placed: offer to mark the covered Groceries rows `Purchased` with
-  today's `Purchase Date`. Inventory expiry updates come from the receipt via meal-planner.
+- **After checkout** (Ryan says the order is placed, or at the start of the next run): call
+  `shopping_get_past_orders`, then `shopping_get_past_order` for any order not yet imported. That records
+  what was actually bought and the prices paid (requirement history then reflects real purchases), and shows:
+  - items bought → offer to mark the matching Groceries rows `Purchased` with the order date;
+  - `approved_in_app_but_not_bought` → Ryan dropped them at checkout; treat like a removal without a reason
+    (ask once, grouped, why — have enough, wrong item, too expensive?) and keep them in mind next run;
+  - `added_outside_app` → things Ryan added on nofrills.ca himself: a hint for regular purchases or
+    preferences (e.g. he chose Stonemill sourdough, Que Pasa blue corn chips) — propose Shopping Preferences
+    lines where they show a clear preference;
+  - `not_fulfilled` → out of stock; consider an alternative next time.
+  Inventory expiry updates still come from the receipt via meal-planner.
 
 ## Learning from reviews
 

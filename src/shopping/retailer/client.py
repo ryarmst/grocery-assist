@@ -20,7 +20,17 @@ from zoneinfo import ZoneInfo
 import httpx
 
 from shopping.auth.session import AuthSession
-from shopping.retailer.normalize import Cart, NormalizedProduct, cart_from_response, from_product_detail, from_search_tile
+from shopping.retailer.normalize import (
+    Cart,
+    NormalizedProduct,
+    PastOrderData,
+    PastOrderSummary,
+    cart_from_response,
+    from_product_detail,
+    from_search_tile,
+    past_order_from_detail,
+    past_orders_from_history,
+)
 
 log = logging.getLogger(__name__)
 
@@ -31,6 +41,8 @@ _ALLOWED: list[tuple[str, re.Pattern]] = [
     ("GET", re.compile(r"^/v1/customers/[\w-]+/carts$")),
     ("GET", re.compile(r"^/v1/carts/[\w-]+$")),
     ("POST", re.compile(r"^/v1/carts/[\w-]+$")),  # body restricted to {"entries": ...} below
+    ("GET", re.compile(r"^/v1/ecommerce/v2/[\w-]+/customers/historical-orders$")),  # order history (read-only)
+    ("GET", re.compile(r"^/v1/ecommerce/v2/[\w-]+/customers/historical-orders/\d+$")),
 ]
 
 DEAL_FILTERS = {
@@ -290,3 +302,16 @@ class PCExpressClient:
 
     async def remove_cart_item(self, product_id: str) -> Cart:
         return await self.set_cart_quantity(product_id, 0)
+
+    # -- order history (authenticated, read-only) ---------------------------------------
+    async def list_past_orders(self) -> list[PastOrderSummary]:
+        await self._auth.ensure_authenticated()
+        data = await self._call("past_orders", "GET", f"/v1/ecommerce/v2/{self._banner}/customers/historical-orders", auth=True)
+        return past_orders_from_history(data)
+
+    async def get_past_order(self, order_id: str) -> PastOrderData:
+        if not str(order_id).isdigit():
+            raise RetailerError("Order numbers are digits only.")
+        await self._auth.ensure_authenticated()
+        data = await self._call("past_order", "GET", f"/v1/ecommerce/v2/{self._banner}/customers/historical-orders/{order_id}", auth=True)
+        return past_order_from_detail(data)

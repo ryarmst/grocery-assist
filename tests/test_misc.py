@@ -35,8 +35,10 @@ def test_mcp_surface_has_no_purchase_tools():
 
     names = tool_names()
     assert "shopping_search_products" in names and "shopping_apply_approved" in names
-    for banned in ("checkout", "order", "payment", "purchase", "timeslot", "http", "request"):
+    for banned in ("checkout", "payment", "purchase", "timeslot", "http", "request", "place", "submit_order", "create_order"):
         assert not any(banned in n for n in names), banned
+    # The only order-related tools are read-only views of past orders.
+    assert {n for n in names if "order" in n} == {"shopping_get_past_orders", "shopping_get_past_order"}
 
 
 async def test_mcp_errors_reach_the_agent():

@@ -1,0 +1,56 @@
+{% extends "base.html" %}
+{% block title %}Order {{ o.order_id if o else '' }}{% endblock %}
+{% block content %}
+<p class="small"><a href="/orders">← Orders</a></p>
+{% if error %}<div class="flash err">{{ error }}</div>{% endif %}
+{% if o %}
+<div class="run-head">
+  <h1>Order {{ o.order_id }}</h1>
+  <span class="status applied">{{ (o.fulfillment or '') | lower }}</span>
+</div>
+<p class="muted small">{{ (o.placed_at or '')[:16].replace('T', ' ') }} UTC · {{ o.store or '' }}</p>
+
+<div class="grid2" style="margin:12px 0">
+  <div class="stat"><div class="k">Total</div><div class="v">{{ o.total | money }}</div></div>
+  <div class="stat"><div class="k">Items</div><div class="v">{{ o.item_count }}</div></div>
+  <div class="stat"><div class="k">From shopping runs</div><div class="v">{{ o.from_runs }}</div></div>
+  <div class="stat"><div class="k">PC Optimum points</div><div class="v">{{ (o.points_earned or 0) | int }}</div></div>
+</div>
+
+<h2>Items</h2>
+<div class="table-wrap"><table>
+  <thead><tr><th>Item</th><th class="num">Qty</th><th class="num">Price</th><th class="num">Total</th><th>Source</th></tr></thead>
+  <tbody>
+  {% for i in o['items'] %}
+  <tr class="{{ '' if i.fulfilled else 'muted' }}">
+    <td>{{ i.brand or '' }} <a href="/history/{{ i.product_id }}">{{ i.name }}</a> <span class="muted small">{{ i.size or '' }}</span>
+      {% if not i.fulfilled %}<span class="status rejected">not fulfilled</span>{% endif %}</td>
+    <td class="num">{{ i.quantity }}</td>
+    <td class="num small">{{ i.unit_price | money }}{% if i.per == 'kg' %}/kg{% endif %}</td>
+    <td class="num">{{ i.total | money }}</td>
+    <td class="small">{% if i.from_run %}<a href="/runs/{{ i.from_run.run_id }}">{{ i.from_run.requirement or 'run' }}</a>{% else %}<span class="muted">added on nofrills.ca</span>{% endif %}</td>
+  </tr>
+  {% endfor %}
+  </tbody>
+</table></div>
+
+{% if o.approved_in_app_but_not_bought %}
+<h2>Approved in the app but not in this order</h2>
+<p class="muted small">These were added to the cart from a run in the two weeks before the order, but weren't bought — removed at checkout, or bought in a different order.</p>
+<div class="table-wrap"><table>
+  <thead><tr><th>Item</th><th>For</th><th class="num">Qty</th><th>Run</th><th></th></tr></thead>
+  <tbody>
+  {% for a in o.approved_in_app_but_not_bought %}
+  <tr><td><a href="/history/{{ a.product_id }}">{{ a.product }}</a></td><td class="small">{{ a.requirement or '' }}</td>
+    <td class="num">{{ a.quantity | qty }}</td><td class="small"><a href="/runs/{{ a.run_id }}">{{ a.run }}</a></td>
+    <td><a class="btn" href="/runs/{{ a.run_id }}/selections/{{ a.selection_id }}/modify">Why?…</a></td></tr>
+  {% endfor %}
+  </tbody>
+</table></div>
+{% endif %}
+
+{% if o.fees_and_tips %}
+<p class="muted small" style="margin-top:12px">Fees &amp; tips: {% for f in o.fees_and_tips %}{{ f.name }} {{ f.total | money }}{{ ', ' if not loop.last }}{% endfor %}</p>
+{% endif %}
+{% endif %}
+{% endblock %}

@@ -65,7 +65,9 @@ keeps the Notion pantry current and writes the Groceries list this app shops fro
 6. Learn from your review → `shopping_get_feedback`, then `shopping_mark_feedback_reviewed` once the lesson
    is saved (the skill writes it to Notion's Shopping Preferences)
 
-Also: `shopping_get_cart`, `shopping_list_runs`, `shopping_get_run`, `shopping_get_selection_history`,
+Also: `shopping_get_past_orders` / `shopping_get_past_order` (what was actually bought: items, prices paid,
+which run suggested each item, what was dropped at checkout — importing an order also feeds price and
+purchase history), `shopping_get_cart`, `shopping_list_runs`, `shopping_get_run`, `shopping_get_selection_history`,
 `shopping_get_recent_price_history`, `shopping_add_preference_note`, `shopping_auth_status`, and
 `shopping_apply_approved` (retries adding *already approved* items, e.g. after a session expired).
 
