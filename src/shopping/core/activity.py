@@ -11,7 +11,7 @@ from sqlalchemy.orm import Session
 
 from shopping.core.feedback import feedback_dict
 from shopping.core.service import product_label
-from shopping.models import PREFERENCE_KINDS, CartAction, Feedback, PastOrder, Preference, Product, Selection, utcnow
+from shopping.models import PREFERENCE_KINDS, CartAction, Feedback, PastOrder, Preference, Product, Selection, TopDeal, utcnow
 
 KINDS = {
     "suggested": "Suggested",
@@ -22,6 +22,7 @@ KINDS = {
     "note": "Note",
     "rule": "Rule saved",
     "purchased": "Bought",
+    "deal": "Top deal",
 }
 
 
@@ -78,6 +79,8 @@ def activity(session: Session, *, days: int = 30, kind: str | None = None, q: st
             events.append({**base, "kind": "note", "title": "Substitution changed",
                            "detail": ("subs OK" if to.get("allowed") else "subs off") + (" · specific substitute" if to.get("substitute") else ""),
                            "note": f.note})
+        elif f.action == "deal_dismissed":
+            events.append({**base, "kind": "deal", "title": "Deal dismissed", "detail": ", ".join(d["tag_labels"]), "note": f.note})
         elif f.action in ("note", "approved", "quantity_changed") and (f.note or f.tags):
             events.append({**base, "kind": "note", "title": {"note": "Note", "approved": "Kept — note", "quantity_changed": "Quantity changed — note"}[f.action],
                            "detail": ", ".join(d["tag_labels"]), "note": f.note})
@@ -105,6 +108,12 @@ def activity(session: Session, *, days: int = 30, kind: str | None = None, q: st
                        "note": p.note})
 
     if not run_id:
+        for deal in session.scalars(select(TopDeal).where(TopDeal.created_at >= since)):
+            price = deal.observation.effective_price if deal.observation else None
+            events.append({"time": deal.created_at, "kind": "deal", "title": "Deal flagged" + (" by you" if deal.added_by == "user" else ""),
+                           "product": product_label(deal.product), "product_id": deal.product.retailer_product_id,
+                           "requirement": deal.relevant_to,
+                           "detail": deal.headline + (f" · ${price:.2f}" if price is not None else ""), "note": deal.why})
         for order in session.scalars(select(PastOrder).where(PastOrder.placed_at >= since)):
             lines = [l for l in order.lines if not l.is_fee and l.fulfilled]
             if product_id:

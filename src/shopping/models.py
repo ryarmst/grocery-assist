@@ -272,6 +272,14 @@ FEEDBACK_TAGS = {
         "good_pick": "Good pick",
         "good_deal": "Good deal",
     },
+    "deal_dismissed": {
+        "have_enough": "Have enough / not needed",
+        "not_a_deal": "Not a real deal",
+        "dislike_product": "Don't like this product",
+        "dislike_brand": "Don't like this brand",
+        "buy_elsewhere": "Buy at Costco / elsewhere",
+        "not_interested": "Not something I buy",
+    },
 }
 FEEDBACK_TAG_LABELS = {k: v for tags in FEEDBACK_TAGS.values() for k, v in tags.items()} | {"other": "Other"}
 
@@ -350,3 +358,32 @@ class AppSetting(Base):
 
     key: Mapped[str] = mapped_column(String(64), primary_key=True)
     value: Mapped[str | None] = mapped_column(Text)
+
+
+# Top deals lifecycle
+DEAL_ACTIVE, DEAL_ADDED, DEAL_DISMISSED, DEAL_RETIRED = "active", "added_to_cart", "dismissed", "retired"
+
+
+class TopDeal(Base):
+    """A deal worth the user's attention, flagged by the agent (or the user) for the Deals page.
+    Independent of runs: the user can add it straight to the cart or dismiss it with a reason."""
+
+    __tablename__ = "top_deals"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow, index=True)
+    updated_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow, onupdate=utcnow)
+    product_id: Mapped[int] = mapped_column(ForeignKey("products.id"), index=True)
+    price_observation_id: Mapped[int | None] = mapped_column(ForeignKey("price_observations.id"))  # price when flagged
+    headline: Mapped[str] = mapped_column(String(128))  # "Lowest we've seen", "29% off"
+    why: Mapped[str | None] = mapped_column(Text)  # the agent's reasoning, with numbers
+    relevant_to: Mapped[str | None] = mapped_column(String(128), index=True)  # pantry / list item it matters for
+    rating: Mapped[int] = mapped_column(Integer, default=2)  # 1 good · 2 great · 3 stock up
+    suggested_quantity: Mapped[float] = mapped_column(Float, default=1)
+    added_by: Mapped[str] = mapped_column(String(16), default="agent")  # agent | user
+    status: Mapped[str] = mapped_column(String(16), default=DEAL_ACTIVE, index=True)
+    acted_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
+    response_note: Mapped[str | None] = mapped_column(Text)  # why it was dismissed / retired
+
+    product: Mapped[Product] = relationship()
+    observation: Mapped[PriceObservation | None] = relationship()

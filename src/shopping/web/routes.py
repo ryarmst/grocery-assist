@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import logging
+import re
 from pathlib import Path
 from urllib.parse import quote, urlsplit
 
@@ -17,6 +18,7 @@ from shopping import context
 from shopping.auth.session import AuthRequired
 from shopping.config import settings
 from shopping.core import activity as act
+from shopping.core import deals as dls
 from shopping.core import feedback as fbk
 from shopping.core import modify as mod
 from shopping.core import orders as ords
@@ -617,6 +619,67 @@ async def cart_substitution(product_id: str, allowed: str = Form("")):
         except (AuthRequired, RetailerError, service.ShoppingError) as exc:
             return _back("/cart", err=str(exc))
     return _back("/cart", msg=msg)
+
+
+# -- top deals -------------------------------------------------------------------------------
+
+_PRODUCT_CODE = re.compile(r"(\d{6,}_[A-Z]{2,4})")
+
+
+@router.get("/deals", response_class=HTMLResponse)
+def deals_page(request: Request):
+    with session_scope() as session:
+        rows = [dls.deal_dict(session, d, store_id=settings.store_id) for d in dls.list_deals(session, include_closed=True, days=30)]
+    active = [d for d in rows if d["status"] == "active"]
+    closed = [d for d in rows if d["status"] != "active"]
+    return templates.TemplateResponse(request, "deals.html", {"active": active, "closed": closed, "RATINGS": dls.RATINGS, "today": dls.today(), **_auth_ctx()})
+
+
+@router.post("/deals")
+async def deals_add(product: str = Form(...), headline: str = Form(""), why: str = Form(""), relevant_to: str = Form(""),
+                    rating: int = Form(2)):
+    m = _PRODUCT_CODE.search(product)
+    if not m:
+        return _back("/deals", err="Paste a nofrills.ca product link or a product code like 20163708001_EA.")
+    try:
+        np = await context.client().get_product(m.group(1))
+        with session_scope() as session:
+            deal = dls.flag_deal(session, np, headline=headline, why=why, relevant_to=relevant_to, rating=rating, added_by="user",
+                                 store_id=settings.store_id)
+            label = service.product_label(deal.product)
+    except (RetailerError, service.ShoppingError) as exc:
+        return _back("/deals", err=str(exc))
+    return _back("/deals", msg=f"Added {label} to top deals.")
+
+
+@router.post("/deals/{deal_id}/cart")
+async def deals_to_cart(deal_id: int, quantity: float = Form(1)):
+    with session_scope() as session:
+        try:
+            msg = await dls.add_to_cart(session, context.client(), deal_id, quantity)
+        except (AuthRequired, RetailerError, service.ShoppingError) as exc:
+            return _back("/deals", err=str(exc))
+    return _back("/deals", msg=msg)
+
+
+@router.post("/deals/{deal_id}/dismiss")
+def deals_dismiss(deal_id: int, tags: list[str] = Form([]), note: str = Form("")):
+    with session_scope() as session:
+        try:
+            dls.dismiss(session, deal_id, tags=tags, note=note)
+        except service.ShoppingError as exc:
+            return _back("/deals", err=str(exc))
+    return _back("/deals", msg="Dismissed. The agent will see your reason.")
+
+
+@router.post("/deals/{deal_id}/reopen")
+def deals_reopen(deal_id: int):
+    with session_scope() as session:
+        try:
+            dls.reopen(session, deal_id)
+        except service.ShoppingError as exc:
+            return _back("/deals", err=str(exc))
+    return _back("/deals", msg="Back on the list.")
 
 
 # -- auth ------------------------------------------------------------------------------------

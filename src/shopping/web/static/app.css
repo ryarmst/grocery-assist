@@ -152,3 +152,5 @@ table.events td:nth-child(4) { min-width: 200px; }
 .subs-row input[type=text] { flex: 1; min-width: 200px; }
 .inline-check { display: inline-flex; gap: 6px; align-items: center; }
 .badge.sub { color: var(--accent); }
+.status.rating-2 { color: var(--badge-deal); }
+.status.rating-3 { background: var(--badge-deal); color: #fff; }

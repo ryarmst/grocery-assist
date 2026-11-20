@@ -12,6 +12,7 @@
   <nav>
     {% set path = request.url.path %}
     <a href="/" class="{{ 'on' if path == '/' or path.startswith('/runs') }}">Runs</a>
+    <a href="/deals" class="{{ 'on' if path.startswith('/deals') }}">Deals</a>
     <a href="/cart" class="{{ 'on' if path.startswith('/cart') }}">Cart</a>
     <a href="/orders" class="{{ 'on' if path.startswith('/orders') }}">Orders</a>
     <a href="/history" class="{{ 'on' if path.startswith('/history') }}">History</a>

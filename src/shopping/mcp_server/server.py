@@ -20,6 +20,7 @@ from sqlalchemy import select
 from shopping import context
 from shopping.auth.session import AuthRequired
 from shopping.config import settings
+from shopping.core import deals as dls
 from shopping.core import feedback as fbk
 from shopping.core import orders as ords
 from shopping.core import service
@@ -42,6 +43,10 @@ Grocery shopping assistant for No Frills (store {settings.store_id}). Workflow:
    and after distilling it elsewhere (e.g. into notes), call shopping_mark_feedback_reviewed.
 4. Approving an item in the web UI adds it to the cart immediately. shopping_apply_approved only retries
    approved items that couldn't be added (e.g. the session had expired); never use it on unapproved items.
+Top deals: when you spot a standout price (lowest we've seen, a big % off on something the user buys, a
+stock-up price on a staple), flag it with shopping_add_top_deal. It appears on the Deals page where the user can
+add it to the cart in one tap; it is not a run item. Check shopping_get_top_deals first: don't re-flag dismissed
+deals, and learn from dismissal reasons.
 Substitutions are per item and OFF by default. Allow them only where a swap is no big deal (commodity
 produce, same-% milk, canned staples, a generic brand); never for items chosen because of a special deal,
 a preferred brand/product/variety, or anything with an "Avoid" or "Subs: never" preference.
@@ -439,6 +444,58 @@ async def shopping_get_past_order(order_id: Annotated[str, Field(description="Or
     with session_scope() as session:
         order = ords.import_order(session, data, next((s for s in summaries if s.order_id == order_id), None), store_id=settings.store_id)
         return ords.order_view(session, order)
+
+
+# -------------------------------------------------------------------------------------
+# Top deals (the Deals page)
+# -------------------------------------------------------------------------------------
+
+def _deals_url() -> str:
+    return f"{context.PUBLIC_URL}/deals"
+
+
+@mcp.tool()
+@logged
+async def shopping_add_top_deal(
+    product_id: Annotated[str, Field(description="Retailer product id, e.g. 20039581001_EA")],
+    why: Annotated[str, Field(description="One or two sentences with the numbers: price vs regular / our history / unit price, and why it matters to this household")],
+    headline: Annotated[str | None, Field(description="Short tag shown on the card, e.g. \"Lowest we've seen\", \"45% off\", \"Stock-up price\". Defaults to the % off.")] = None,
+    relevant_to: Annotated[str | None, Field(description="The pantry / list item this is for, using its exact Notion name (e.g. 'Eggs')")] = None,
+    rating: Annotated[int, Field(ge=1, le=3, description="1 good · 2 great · 3 stock up (exceptional; buy several)")] = 2,
+    suggested_quantity: Annotated[float, Field(gt=0, le=24, description="Quantity pre-filled on the Add button")] = 1,
+) -> dict:
+    """Flag a standout deal for the user's Deals page, at the product's current price. The user adds it to the
+    cart from there (or dismisses it, with a reason you can read in shopping_get_top_deals). Re-flagging a
+    product that is already listed updates it. Use sparingly: a handful of genuinely good deals per shop."""
+    p = await context.client().get_product(product_id)
+    with session_scope() as session:
+        deal = dls.flag_deal(session, p, headline=headline, why=why, relevant_to=relevant_to, rating=rating,
+                             suggested_quantity=suggested_quantity, added_by="agent", store_id=settings.store_id)
+        return {"deal": dls.deal_dict(session, deal, store_id=settings.store_id), "deals_url": _deals_url()}
+
+
+@mcp.tool()
+@logged
+async def shopping_get_top_deals(
+    include_closed: Annotated[bool, Field(description="Also return deals added to the cart, dismissed or ended recently")] = True,
+    days: Annotated[int, Field(ge=1, le=365, description="How far back to include closed deals")] = 60,
+) -> dict:
+    """Deals on the Deals page and what the user did with them: added_to_cart, dismissed (with their reason in
+    response_note), or retired/ended. Deals whose sale has ended are retired automatically."""
+    with session_scope() as session:
+        deals = [dls.deal_dict(session, d, store_id=settings.store_id) for d in dls.list_deals(session, include_closed=include_closed, days=days)]
+    return {"deals_url": _deals_url(), "active": sum(1 for d in deals if d["status"] == "active"), "deals": deals}
+
+
+@mcp.tool()
+@logged
+async def shopping_retire_top_deal(
+    deal_id: int,
+    reason: Annotated[str, Field(description="e.g. 'price back to regular', 'out of stock', 'flagged by mistake'")],
+) -> dict:
+    """Take a deal off the Deals page (it stays in history)."""
+    with session_scope() as session:
+        return {"deal": dls.deal_dict(session, dls.retire(session, deal_id, reason), store_id=settings.store_id)}
 
 
 def tool_names() -> list[str]:

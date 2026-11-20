@@ -7,6 +7,8 @@ anything.
   preferences, and stage a *shopping run* with reasons for every item.
 - **For you:** a web UI to triage the run. Approving an item puts it in your No Frills cart; removing
   or swapping it records why, so the agent learns.
+- **Top deals:** standout prices the agent spots go on a Deals page; add one to the cart in a tap or
+  dismiss it with a reason.
 - **No checkout.** There is no code to place orders, book timeslots or pay. You check out on nofrills.ca.
 
 ## Deploy (Docker)
@@ -63,6 +65,8 @@ keeps the Notion pantry current and writes the Groceries list this app shops fro
    one recommended), `shopping_update_selection`, `shopping_submit_run_for_review` → returns a review URL.
    Each item carries a substitution preference (off by default; the skill allows it only where a swap is
    harmless)
+   Standout prices on things not needed this week → `shopping_add_top_deal` (the Deals page);
+   `shopping_get_top_deals` shows what you added or dismissed, and why; `shopping_retire_top_deal`
 5. **You** triage it in the web UI; approved items go into the cart
 6. Learn from your review → `shopping_get_feedback`, then `shopping_mark_feedback_reviewed` once the lesson
    is saved (the skill writes it to Notion's Shopping Preferences)

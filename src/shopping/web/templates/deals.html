@@ -1,0 +1,91 @@
+{% extends "base.html" %}
+{% block title %}Top deals{% endblock %}
+{% block content %}
+<h1>Top deals</h1>
+<p class="muted small">Standout prices worth knowing about, flagged by the agent while shopping. Add one straight to the cart, or dismiss
+it with a reason so future picks get better. Deals drop off when the sale ends.</p>
+
+{% if active %}
+  {% for d in active %}
+  <div class="card deal-card">
+    <div class="req">
+      <h3>{{ d.relevant_to or 'Deal' }}{% if d.added_by == 'user' %} <span class="muted">· added by you</span>{% endif %}</h3>
+      <span class="status rating-{{ d.rating }}">{{ '★' * d.rating }} {{ d.rating_label }}</span>
+    </div>
+    <div class="product">
+      {% if d.image_url %}<img src="{{ d.image_url }}" alt="" loading="lazy">{% else %}<div></div>{% endif %}
+      <div>
+        <div class="brand">{{ d.brand or '' }}</div>
+        <div class="name"><a href="/history/{{ d.product_id }}">{{ d.name }}</a> <span class="muted small">{{ d.size or '' }}</span></div>
+        <div class="badges"><span class="badge deal">{{ d.headline }}</span>{% if d.pc_optimum %}<span class="badge pref">{{ d.pc_optimum }}</span>{% endif %}</div>
+      </div>
+      <div class="price">
+        <div class="now {{ 'sale' if d.discount_pct }}">{{ d.price | money }}</div>
+        {% if d.discount_pct %}<div class="was">{{ d.regular_price | money }}</div>{% endif %}
+        <div class="unit">{{ unit_price(d.unit_price, d.unit_price_basis) }}</div>
+      </div>
+    </div>
+    {% if d.why %}<p class="rationale">{{ d.why }}</p>{% endif %}
+    <div class="history-line">
+      {% if d.deal_text %}<span class="sale-text">{{ d.deal_text }}</span> · {% endif %}
+      {% if d.ends %}ends <strong>{{ d.ends }}</strong> · {% endif %}
+      {% if d.lowest_seen is not none and d.days_observed and d.days_observed > 1 %}lowest we've seen <strong>{{ d.lowest_seen | money }}</strong>{% if d.avg_90d %} · 90-day avg {{ d.avg_90d | money }}{% endif %} · {% endif %}
+      flagged {{ d.flagged_at[:10] }}
+      {% if d.price_changed_since_flagged %}<div class="warn-line">Price has changed since it was flagged: now {{ d.latest_price | money }}.</div>{% endif %}
+    </div>
+    <div class="actions">
+      <form method="post" action="/deals/{{ d.deal_id }}/cart" class="inline">
+        <input type="number" name="quantity" value="{{ d.suggested_quantity | qty }}" min="{{ '0.1' if d.sold_by == 'weight' else '1' }}" step="{{ 'any' if d.sold_by == 'weight' else '1' }}" style="width:4.5em">
+        <button class="primary" {{ 'disabled' if auth.state != 'connected' }}>Add to cart</button>
+      </form>
+      {% if d.link %}<a class="small" href="{{ d.link }}" target="_blank" rel="noopener">View on nofrills.ca</a>{% endif %}
+      <span class="spacer"></span>
+      {% if auth.state != 'connected' %}<span class="small muted"><a href="/auth">Connect your session</a> to add to the cart.</span>{% endif %}
+    </div>
+    <details class="why">
+      <summary>Not for me…</summary>
+      <form method="post" action="/deals/{{ d.deal_id }}/dismiss">
+        <div class="chip-group">
+          {% for code, label in FEEDBACK_TAGS.deal_dismissed.items() %}<label class="chip"><input type="checkbox" name="tags" value="{{ code }}"><span>{{ label }}</span></label>{% endfor %}
+        </div>
+        <div class="subs-row"><input type="text" name="note" placeholder="Optional note for the agent, e.g. 'only buy this brand at Costco'"><button>Dismiss</button></div>
+      </form>
+    </details>
+  </div>
+  {% endfor %}
+{% else %}
+<div class="empty">No active deals. The agent adds standout prices here while it shops, or add one yourself below.</div>
+{% endif %}
+
+<details class="why" style="margin-top:18px">
+  <summary>Add a deal yourself</summary>
+  <form method="post" action="/deals" class="form-grid" style="margin-top:8px">
+    <label style="grid-column: span 2">Product link or code <input type="text" name="product" required placeholder="https://www.nofrills.ca/…/p/20163708001_EA"></label>
+    <label>For (pantry item) <input type="text" name="relevant_to" placeholder="e.g. Eggs"></label>
+    <label>Headline <input type="text" name="headline" placeholder="defaults to % off"></label>
+    <label style="grid-column: span 2">Why <input type="text" name="why" placeholder="e.g. half the usual price"></label>
+    <label>Rating
+      <select name="rating">{% for n, label in RATINGS.items() %}<option value="{{ n }}" {{ 'selected' if n == 2 }}>{{ '★' * n }} {{ label }}</option>{% endfor %}</select>
+    </label>
+    <button>Add deal</button>
+  </form>
+</details>
+
+{% if closed %}
+<h2>Recent (last 30 days)</h2>
+<div class="table-wrap"><table>
+  <thead><tr><th>Flagged</th><th>Product</th><th class="num">Price</th><th>Outcome</th><th></th></tr></thead>
+  <tbody>
+  {% for d in closed %}
+  <tr class="{{ 'muted' if d.status != 'added_to_cart' }}">
+    <td class="small">{{ d.flagged_at[:10] }}</td>
+    <td><a href="/history/{{ d.product_id }}">{{ d.product }}</a><div class="small muted">{{ d.headline }}{% if d.relevant_to %} · {{ d.relevant_to }}{% endif %}</div></td>
+    <td class="num">{{ d.price | money }}</td>
+    <td class="small">{{ d.status_label }}{% if d.response_note %}<br><span class="muted">{{ d.response_note }}</span>{% endif %}</td>
+    <td>{% if d.status in ('dismissed', 'retired') and (not d.ends or d.ends >= today) %}<form method="post" action="/deals/{{ d.deal_id }}/reopen" class="inline"><button class="link">Restore</button></form>{% endif %}</td>
+  </tr>
+  {% endfor %}
+  </tbody>
+</table></div>
+{% endif %}
+{% endblock %}
