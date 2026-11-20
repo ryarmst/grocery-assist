@@ -35,6 +35,7 @@ from shopping.models import (
     ShoppingRun,
     utcnow,
 )
+from shopping.auth.session import AuthRequired
 from shopping.retailer.client import PCExpressClient, RetailerError
 from shopping.retailer.normalize import NormalizedProduct, SubstitutionSpec, round2
 
@@ -617,7 +618,10 @@ async def apply_approved(session: Session, client: PCExpressClient, run_id: str,
             for s in sels:
                 s.status, s.last_error = SEL_FAILED, str(exc)[:500]
             results.append({"product_id": rid, "name": sels[0].product.name, "ok": False, "error": str(exc)[:300]})
-            log.warning("cart apply failed run=%s product=%s: %s", run.id, rid, exc)
+            if isinstance(exc, (RetailerError, AuthRequired, ShoppingError)):
+                log.warning("cart apply failed run=%s product=%s: %s", run.id, rid, exc)
+            else:  # a bug, not a retailer refusal: keep the traceback
+                log.exception("cart apply crashed run=%s product=%s", run.id, rid)
             if "session" in str(exc).lower() or "unavailable" in str(exc).lower():
                 session.add(action)
                 break  # auth problem or retailer outage: stop rather than failing every item

@@ -385,23 +385,37 @@ def substitute_text(p: NormalizedProduct) -> str:
     return f"Customer Substitute: {p.brand or ''}, {p.name}, Price: {price}, ArticleID: {p.retailer_product_id}"
 
 
+def _obj(value) -> dict:
+    """Nested retailer fields are usually objects but sometimes a bare id/string or null."""
+    return value if isinstance(value, dict) else {}
+
+
 def cart_from_response(data: dict) -> Cart:
-    cart = data.get("cart", data)
+    data = _obj(data)
+    cart = _obj(data.get("cart")) or data
     lines: list[CartLine] = []
     store_id = store_name = None
     subtotal = est = disc = None
     for order in cart.get("orders") or []:
-        pickup = ((order.get("fulfillment") or {}).get("pickupBooking") or {}).get("pickupLocation") or {}
+        order = _obj(order)
+        pickup = _obj(_obj(_obj(order.get("fulfillment")).get("pickupBooking")).get("pickupLocation"))
         store_id = store_id or pickup.get("storeId") or pickup.get("id")
         store_name = store_name or pickup.get("name")
-        totals = order.get("totals") or {}
+        totals = _obj(order.get("totals"))
         subtotal = totals.get("subTotal", subtotal)
         est = totals.get("estimatedTotal", est)
         disc = totals.get("totalDiscounts", disc)
         for entry in order.get("entries") or []:
-            offer = entry.get("offer") or {}
-            product = offer.get("product") or {}
-            prices = entry.get("prices") or {}
+            entry = _obj(entry)
+            offer = _obj(entry.get("offer"))
+            product = _obj(offer.get("product"))
+            prices = _obj(entry.get("prices"))
+            vendor = offer.get("vendor")
+            subs = entry.get("substitutionPreference")
+            subs = subs if isinstance(subs, dict) else {"substitutionAllowed": subs} if isinstance(subs, bool) else {}
+            selected = entry.get("selectedSubstitution")
+            if isinstance(selected, dict):
+                selected = selected.get("id") or selected.get("code")
             lines.append(
                 CartLine(
                     product_id=product.get("id") or offer.get("id") or "",
@@ -412,10 +426,10 @@ def cart_from_response(data: dict) -> Cart:
                     line_total=prices.get("totalSalePrice"),
                     regular_line_total=prices.get("totalRegularPrice"),
                     selling_type=offer.get("sellingType"),
-                    seller_id=(offer.get("vendor") or {}).get("id"),
-                    substitution_allowed=(entry.get("substitutionPreference") or {}).get("substitutionAllowed"),
-                    substitution_comment=(entry.get("substitutionPreference") or {}).get("comment") or None,
-                    selected_substitution=entry.get("selectedSubstitution") or None,
+                    seller_id=vendor.get("id") if isinstance(vendor, dict) else vendor,
+                    substitution_allowed=subs.get("substitutionAllowed"),
+                    substitution_comment=subs.get("comment") or None,
+                    selected_substitution=selected or None,
                 )
             )
     return Cart(cart.get("id") or "", store_id, store_name, lines, subtotal, est, disc)

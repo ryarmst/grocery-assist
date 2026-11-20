@@ -174,3 +174,35 @@ async def test_cart_cache_is_per_customer(tmp_path):
     auth.set_access_token(fake_jwt(sub="customer-b"))
     assert await client._current_cart_id() == "cart-b"  # noqa: SLF001
     assert len(seen) == 2
+
+
+@pytest.mark.parametrize("body", [
+    {"errors": ["Cart is locked for editing"]},
+    {"errors": [{"message": json.dumps({"error_response": "Cart is locked for editing"})}]},
+    {"errors": [{"message": json.dumps({"error_response": {"message": "Cart is locked for editing", "details": "x"}})}]},
+    {"code": "CART_LOCKED", "message": "Cart is locked for editing"},
+    ["Cart is locked for editing"],
+    "Cart is locked for editing",
+])
+async def test_unusual_error_shapes_are_reported_not_crashed(tmp_path, body):
+    def handler(request):
+        if request.method == "GET":
+            return httpx.Response(200, json={"carts": [{"id": "c"}]})
+        return httpx.Response(400, json=body)
+
+    client, auth = make_client(tmp_path, handler)
+    auth.set_access_token(fake_jwt())
+    with pytest.raises(RetailerError, match="locked"):
+        await client.set_cart_quantity("x_EA", 1)
+
+
+def test_cart_parser_tolerates_string_fields():
+    data = load_fixture("cart_populated.json")
+    entry = data["orders"][0]["entries"][0]
+    entry["offer"]["vendor"] = "3728"
+    entry["substitutionPreference"] = "NONE"
+    data["orders"][0]["fulfillment"] = "pickup"
+    from shopping.retailer.normalize import cart_from_response
+
+    line = cart_from_response(data).lines[0]
+    assert line.seller_id == "3728" and line.substitution_allowed is None

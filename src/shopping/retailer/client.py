@@ -78,18 +78,31 @@ def _classify_error(op: str, resp: httpx.Response) -> RetailerError:
     upstream_status = None
     try:
         data = resp.json()
-        for e in data.get("errors") or []:
-            inner = e.get("message")
-            try:
-                inner = json.loads(inner).get("error_response", {})
-            except (TypeError, ValueError, AttributeError):
-                inner = {"message": inner}
-            code = inner.get("error_code") or e.get("code") or code
-            message = inner.get("message") or message
-            upstream_status = (inner.get("details") or {}).get("status") or upstream_status
-            break
     except ValueError:
-        pass
+        data = None
+    errors = data.get("errors") if isinstance(data, dict) else data if isinstance(data, list) else None
+    if isinstance(data, dict) and not errors and (data.get("message") or data.get("code")):
+        errors = [data]  # flat {"code": ..., "message": ...}
+    for e in errors or []:
+        # Shapes seen: {"message": "<JSON string with error_response>"}, {"code":..,"message":..}, or a bare string.
+        e = e if isinstance(e, dict) else {"message": e}
+        inner = e.get("message")
+        try:
+            parsed = json.loads(inner) if isinstance(inner, str) else inner
+        except ValueError:
+            parsed = None
+        if isinstance(parsed, dict):
+            inner = parsed.get("error_response", parsed)
+        inner = inner if isinstance(inner, dict) else {"message": None if inner is None else str(inner)}
+        code = inner.get("error_code") or inner.get("code") or e.get("code") or code
+        message = inner.get("message") or e.get("description") or message
+        details = inner.get("details")
+        upstream_status = (details.get("status") if isinstance(details, dict) else None) or upstream_status
+        break
+    code = None if code is None else str(code)
+    message = None if message is None else str(message)
+    if not isinstance(upstream_status, int):
+        upstream_status = int(upstream_status) if str(upstream_status or "").isdigit() else None
     upstream_down = (upstream_status or 0) >= 500 or "timeout" in resp.text.lower() or "unavailable" in resp.text.lower()
     transient = resp.status_code >= 500 or ((code or "").endswith("_ERROR") and upstream_down)
     if transient:
@@ -304,7 +317,7 @@ class PCExpressClient:
                 "selectedSubstitution": substitute_text(substitution.substitute) if substitution.substitute else "",
             })
         data = await self._call("cart_update", "POST", f"/v1/carts/{cart_id}", body={"entries": {product_id: entry}}, auth=True)
-        errors = data.get("errors") or []
+        errors = (data.get("errors") if isinstance(data, dict) else None) or []
         if errors:
             raise RetailerError(f"Retailer reported cart errors: {json.dumps(errors)[:300]}")
         return cart_from_response(data)
