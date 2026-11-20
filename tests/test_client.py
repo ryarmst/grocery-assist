@@ -230,3 +230,16 @@ async def test_new_item_with_substitution_is_added_then_set(tmp_path):
     await client.set_cart_quantity("new_EA", 2, substitution=SubstitutionSpec(allowed=True, comment="any brand"))
     assert [("substitutionAllowed" in e["new_EA"]) for e in sent] == [True, False, True]
     assert sent[-1]["new_EA"]["substitutionComment"] == "any brand"
+
+
+async def test_cart_error_message_is_readable(tmp_path):
+    def handler(request):
+        if request.method == "GET":
+            return httpx.Response(200, json={"carts": [{"id": "c"}]})
+        return httpx.Response(200, json={"cart": {}, "errors": [{"code": "0014", "requestId": None, "message": "Product is out of stock."}]})
+
+    client, auth = make_client(tmp_path, handler)
+    auth.set_access_token(fake_jwt())
+    with pytest.raises(RetailerError) as exc:
+        await client.set_cart_quantity("x_KG", 1)
+    assert str(exc.value) == "No Frills didn't add it: Product is out of stock." and exc.value.code == "0014"

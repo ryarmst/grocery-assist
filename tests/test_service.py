@@ -176,3 +176,13 @@ async def test_packaged_items_take_whole_quantities(session, client):
     with pytest.raises(service.ShoppingError, match="whole number"):
         await service.add_selection(session, client, run.id, product_id=ids[4], quantity=0.5, reasons=["grocery_list"])
     assert service.whole_quantity(0.25, "weight") == 0.25  # sold-by-weight items may be fractional
+
+
+async def test_out_of_stock_products_are_not_staged(session, client):
+    from dataclasses import replace
+
+    pid = list(client.products)[0]
+    client.products[pid] = replace(client.products[pid], availability="OUT")
+    run = service.create_run(session, summary="w", store_id="3728")
+    with pytest.raises(service.ShoppingError, match="out of stock"):
+        await service.add_selection(session, client, run.id, product_id=pid, reasons=["good_deal"])

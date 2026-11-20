@@ -143,6 +143,8 @@ Ryan adds Deals-page items to the cart in one tap, or dismisses them with a reas
 `shopping_search_products` per item (use `sort_by_unit_price` for commodities). Compare unit price
 (per 100 g / 100 mL / item) within one comparison family, never weight vs. volume. For
 `each_priced_by_weight` items (meat, some produce) the shelf price is an estimate for an average pack.
+Search results don't reliably flag out-of-stock items (weighed meat especially); the app refuses to stage
+an out-of-stock product, so when it does, move on to the next-best option and say so in the hand-off.
 `shopping_get_selection_history` shows what was bought before and the typical quantity.
 
 ### 5. Build the run

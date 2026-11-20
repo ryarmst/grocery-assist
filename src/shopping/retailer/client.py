@@ -330,7 +330,10 @@ class PCExpressClient:
                 raise RetailerError(f"Added to the cart, but the substitution setting wasn't saved: {exc2}", code=exc2.code) from exc2
         errors = (data.get("errors") if isinstance(data, dict) else None) or []
         if errors:
-            raise RetailerError(f"Retailer reported cart errors: {json.dumps(errors)[:300]}")
+            # e.g. [{"code": "0014", "message": "Product is out of stock.", ...}]
+            first = errors[0] if isinstance(errors[0], dict) else {"message": str(errors[0])}
+            text = "; ".join(str(e.get("message") or e.get("code")) if isinstance(e, dict) else str(e) for e in errors)
+            raise RetailerError(f"No Frills didn't add it: {text[:300]}", code=str(first.get("code")) if first.get("code") else None)
         return cart_from_response(data)
 
     async def set_cart_substitution(self, product_id: str, substitution: SubstitutionSpec) -> Cart:

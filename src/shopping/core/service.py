@@ -313,6 +313,9 @@ async def _stage_selection(session: Session, client: PCExpressClient, run: Shopp
             f"{np.brand or ''} {np.name} is blacklisted by preference #{hit.id} ({hit.kind}). "
             "Choose another product (or include reason 'user_requested' if the user explicitly asked for it)."
         )
+    if (np.availability or "").upper() in ("OUT", "OUT_OF_STOCK"):
+        # Search results don't always flag this (weighed meat especially); the product page does.
+        raise ShoppingError(f"{np.brand or ''} {np.name} is out of stock at this store; choose another product.".strip())
     quantity = whole_quantity(quantity, np.sold_by)
     if np.max_quantity and quantity > np.max_quantity:
         raise ShoppingError(f"Quantity {quantity} exceeds the retailer maximum of {np.max_quantity}.")
