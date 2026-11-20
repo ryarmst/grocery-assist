@@ -39,7 +39,8 @@
     <span id="card-{{ sel.id }}"></span>
     <div class="req">
       <h3>{{ card.group.label if card.kind == 'group' else (sel.requirement or m.p.name) }}</h3>
-      <span class="status {{ sel.status }}">{{ sel.status | status_label }}</span>
+      {% if sel.id in cart_pending %}<span class="status adding" data-adding="{{ sel.id }}">Adding to cart…</span>
+      {% else %}<span class="status {{ sel.status }}">{{ sel.status | status_label }}</span>{% endif %}
     </div>
 
     <div class="product">

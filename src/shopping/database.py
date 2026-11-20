@@ -17,13 +17,14 @@ MIGRATIONS_DIR = Path(__file__).resolve().parent / "migrations"
 
 def make_engine(db_path: Path):
     db_path.parent.mkdir(parents=True, exist_ok=True)
-    engine = create_engine(f"sqlite:///{db_path}", connect_args={"check_same_thread": False})
+    engine = create_engine(f"sqlite:///{db_path}", connect_args={"check_same_thread": False, "timeout": 30})
 
     @event.listens_for(engine, "connect")
     def _pragmas(dbapi_conn, _):
         cur = dbapi_conn.cursor()
         cur.execute("PRAGMA foreign_keys=ON")
         cur.execute("PRAGMA journal_mode=WAL")
+        cur.execute("PRAGMA busy_timeout=30000")  # wait for a concurrent writer instead of failing at once
         cur.close()
 
     return engine

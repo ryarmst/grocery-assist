@@ -15,6 +15,7 @@ from starlette.responses import JSONResponse
 
 from shopping import context
 from shopping.config import settings
+from shopping.core.cart_queue import queue as cart_queue
 from shopping.database import run_migrations
 from shopping.logging_setup import setup_logging
 from shopping.mcp_server.server import mcp
@@ -56,9 +57,11 @@ async def lifespan(_: FastAPI):
     run_migrations()
     if not settings.pcx_api_key:
         log.warning("PCX_API_KEY is not set; retailer calls will fail (see README).")
+    cart_queue.start()
     async with mcp.session_manager.run():
         log.info("shopping assistant ready: store=%s data=%s mcp=/mcp auth=%s", settings.store_id, settings.data_dir, context.auth.status().state)
         yield
+    await cart_queue.stop()
     await context.shutdown()
 
 

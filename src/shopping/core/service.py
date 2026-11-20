@@ -626,7 +626,8 @@ async def apply_approved(session: Session, client: PCExpressClient, run_id: str,
                 session.add(action)
                 break  # auth problem or retailer outage: stop rather than failing every item
         session.add(action)
-        session.flush()
+        recompute_run_status(run)
+        session.commit()  # save each item as it lands; never hold the database across the next (slow) retailer call
     recompute_run_status(run)
     ok = sum(1 for r in results if r["ok"])
     errors = [r["error"] for r in results if not r["ok"]]
@@ -712,6 +713,7 @@ async def user_set_cart_quantity(session: Session, client: PCExpressClient, prod
                         quantity_before=before, quantity_after=quantity, upstream_reference=cart.cart_id,
                         price_at_action=Decimal(str(line.unit_price)) if line and line.unit_price is not None else None,
                         shopping_run_id=selection.shopping_run_id if selection else None, selection_id=selection.id if selection else None)
+    session.commit()  # don't hold a write lock during the retailer call
     try:
         cart = await client.set_cart_quantity(product_id, quantity)
         action.success = True

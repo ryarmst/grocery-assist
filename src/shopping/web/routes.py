@@ -9,7 +9,7 @@ from pathlib import Path
 from urllib.parse import quote, urlsplit
 
 from fastapi import APIRouter, Form, Request
-from fastapi.responses import HTMLResponse, RedirectResponse
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 from sqlalchemy import func, select
 from starlette.middleware.base import BaseHTTPMiddleware
@@ -18,6 +18,7 @@ from shopping import context
 from shopping.auth.session import AuthRequired
 from shopping.config import settings
 from shopping.core import activity as act
+from shopping.core.cart_queue import queue as cart_queue
 from shopping.core import deals as dls
 from shopping.core import feedback as fbk
 from shopping.core import modify as mod
@@ -34,6 +35,8 @@ from shopping.models import (
     Preference,
     PriceObservation,
     Product,
+    SEL_APPROVED,
+    SEL_FAILED,
     Selection,
     ShoppingRun,
 )
@@ -102,26 +105,28 @@ class SameOriginPostMiddleware(BaseHTTPMiddleware):
 
 
 def _auth_ctx() -> dict:
-    return {"auth": context.auth.status()}
+    return {"auth": context.auth.status(), "cart_pending": cart_queue.pending(), "cart_event_id": cart_queue.last_event_id}
 
 
 def _connected() -> bool:
     return context.auth.status().state == "connected"
 
 
-async def _add_to_cart(session, run_id: str, sel_ids: list[str] | None) -> tuple[str | None, str | None]:
-    """After approving: put the approved items in the cart right away. Returns (msg, err)."""
+def _to_add(session, run_id: str, sel_ids: list[str] | None) -> list[str]:
+    """Approved items of a run still waiting to go into the cart (all of them, or just `sel_ids`)."""
+    run = service.get_run(session, run_id)
+    return [s.id for s in service.chosen_selections(run)
+            if s.status in (SEL_APPROVED, SEL_FAILED) and s.approved_at and (sel_ids is None or s.id in sel_ids)]
+
+
+def _queue_cart(run_id: str, ids: list[str]) -> str | None:
+    """Hand approved items to the background cart worker (call after the decision is committed)."""
+    if not ids:
+        return None
     if not _connected():
-        return "Approved. Connect your No Frills session (Auth) to add approved items to the cart.", None
-    try:
-        result = await service.apply_approved(session, context.client(), run_id, only_ids=sel_ids, source="approve")
-    except (AuthRequired, RetailerError) as exc:
-        return None, f"Approved, but not added to the cart: {exc}"
-    if result.get("message"):
-        return None, None
-    msg = f"Added {result['applied']} item(s) to the cart." if result["applied"] else None
-    err = f"Approved, but {result['failed']} item(s) couldn't be added: {result['error']}" if result["failed"] else None
-    return msg, err
+        return "Approved. Connect your No Frills session (Auth) to add approved items to the cart."
+    n = cart_queue.enqueue(run_id, ids)
+    return f"Adding {n} item(s) to the cart…" if n else None
 
 
 # -- runs ---------------------------------------------------------------------------------
@@ -224,7 +229,7 @@ def triage_page(request: Request, run_id: str, skipped: str = ""):
 async def triage_submit(run_id: str, sel_id: str, decision: str = Form(...), option: str = Form(""), tags: list[str] = Form([]),
                         note: str = Form(""), rule: str = Form(""), quantity: float | None = Form(None), return_to: str = Form("run"),
                         skipped: str = Form(""), sub_allowed: str = Form(""), sub_note: str = Form("")):
-    msg = err = None
+    ids: list[str] = []
     with session_scope() as session:
         try:
             if decision == "keep" and option and option != sel_id:
@@ -241,7 +246,8 @@ async def triage_submit(run_id: str, sel_id: str, decision: str = Form(...), opt
         except service.ShoppingError as exc:
             return _back(f"/runs/{run_id}" + ("/triage" if return_to == "triage" else ""), err=str(exc))
         if decision in ("keep", "choose"):
-            msg, err = await _add_to_cart(session, run_id, [option if decision == "choose" else sel_id])
+            ids = _to_add(session, run_id, [option if decision == "choose" else sel_id])
+    msg, err = _queue_cart(run_id, ids), None
     target = option or sel_id
     if return_to == "triage":
         return _back(f"/runs/{run_id}/triage" + (f"?skipped={quote(skipped)}" if skipped else ""), msg=msg, err=err)
@@ -255,9 +261,10 @@ async def approve_all(run_id: str, snapshot: str = Form("")):
             n = service.approve_all_current(session, run_id, [s for s in snapshot.split(",") if s])
         except service.ShoppingError as exc:
             return _back(f"/runs/{run_id}", err=str(exc))
-        msg, err = await _add_to_cart(session, run_id, None)
+        ids = _to_add(session, run_id, None)
+    msg = _queue_cart(run_id, ids)
     lead = f"Approved {n} item(s)." if n else ""
-    return _back(f"/runs/{run_id}", msg=" ".join(x for x in [lead, msg] if x) or None, err=err)
+    return _back(f"/runs/{run_id}", msg=" ".join(x for x in [lead, msg] if x) or None)
 
 
 @router.post("/runs/{run_id}/reject-remaining")
@@ -273,8 +280,28 @@ def reject_rest(run_id: str, snapshot: str = Form("")):
 @router.post("/runs/{run_id}/apply")
 async def apply(run_id: str):
     with session_scope() as session:
-        msg, err = await _add_to_cart(session, run_id, None)
-    return _back(f"/runs/{run_id}", msg=msg or ("Nothing waiting to be added." if not err else None), err=err)
+        ids = _to_add(session, run_id, None)
+    return _back(f"/runs/{run_id}", msg=_queue_cart(run_id, ids) or "Nothing waiting to be added.")
+
+
+@router.get("/cart/queue.json")
+def cart_queue_status(after: int = 0, run_id: str = "", ids: str = ""):
+    """Polled by the page while items are being added in the background. `ids`: selections whose
+    current status the page wants (to update their labels in place once they leave the queue)."""
+    events = cart_queue.events_since(after)
+    statuses = {}
+    wanted = [i for i in ids.split(",") if i][:100]
+    if wanted:
+        with session_scope() as session:
+            for sel in session.scalars(select(Selection).where(Selection.id.in_(wanted))):
+                statuses[sel.id] = {"status": sel.status, "label": STATUS_LABELS.get(sel.status, sel.status), "error": sel.last_error}
+    return JSONResponse({
+        "statuses": statuses,
+        "pending": len(cart_queue.pending(run_id or None)),
+        "pending_ids": sorted(cart_queue.pending(run_id or None)),
+        "last_event_id": cart_queue.last_event_id,
+        "events": [{"id": e.id, "run_id": e.run_id, "ok": e.ok, "message": e.message} for e in events],
+    })
 
 
 @router.post("/runs/{run_id}/cancel")
