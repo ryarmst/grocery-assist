@@ -153,7 +153,8 @@ All cart calls need `authorization: Bearer <AccessToken>` + `is-helios-account: 
 - **Substitutions (per item)** use the same call; the entry may also carry
   `"substitutionAllowed": true|false`, `"substitutionComment": "<note to shopper>"` and
   `"selectedSubstitution": "Customer Substitute: <brand>, <name>, Price: <price>, ArticleID: <code>"`
-  (empty string for none). The cart then reports `substitutionPreference: {substitutionAllowed, comment}` and
+  (empty string for none). These fields work only for an item already in the cart: on a first add they
+  fail with `ITEM_NOT_FOUND`, so the client adds the item first, then sets the substitution. The cart then reports `substitutionPreference: {substitutionAllowed, comment}` and
   `selectedSubstitution: "<code>"` per entry; orders report `substitutionData` per line.
   `POST /v1/recommendation/substitution-details {bookingDate, productCodes, pcId, cartId, storeId, banner,
   pickupType, timeSlot, lang}` returns the site's suggested substitutes per product (needs a booked slot;

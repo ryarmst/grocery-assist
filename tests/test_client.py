@@ -206,3 +206,27 @@ def test_cart_parser_tolerates_string_fields():
 
     line = cart_from_response(data).lines[0]
     assert line.seller_id == "3728" and line.substitution_allowed is None
+
+
+async def test_new_item_with_substitution_is_added_then_set(tmp_path):
+    from shopping.retailer.normalize import SubstitutionSpec
+
+    in_cart, sent = set(), []
+
+    def handler(request):
+        if request.method == "GET":
+            return httpx.Response(200, json={"carts": [{"id": "c"}]})
+        entries = json.loads(request.content)["entries"]
+        sent.append(entries)
+        pid, entry = next(iter(entries.items()))
+        if "substitutionAllowed" in entry and pid not in in_cart:
+            inner = json.dumps({"error_response": {"message": "Item was not found.", "error_code": "ITEM_NOT_FOUND"}})
+            return httpx.Response(400, json={"errors": [{"message": inner}]})
+        in_cart.add(pid)
+        return httpx.Response(200, json=load_fixture("cart_update.json"))
+
+    client, auth = make_client(tmp_path, handler)
+    auth.set_access_token(fake_jwt())
+    await client.set_cart_quantity("new_EA", 2, substitution=SubstitutionSpec(allowed=True, comment="any brand"))
+    assert [("substitutionAllowed" in e["new_EA"]) for e in sent] == [True, False, True]
+    assert sent[-1]["new_EA"]["substitutionComment"] == "any brand"

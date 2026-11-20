@@ -316,7 +316,18 @@ class PCExpressClient:
                 "substitutionAllowed": bool(substitution.allowed or substitution.substitute),
                 "selectedSubstitution": substitute_text(substitution.substitute) if substitution.substitute else "",
             })
-        data = await self._call("cart_update", "POST", f"/v1/carts/{cart_id}", body={"entries": {product_id: entry}}, auth=True)
+        try:
+            data = await self._call("cart_update", "POST", f"/v1/carts/{cart_id}", body={"entries": {product_id: entry}}, auth=True)
+        except RetailerError as exc:
+            # Substitution fields only apply to items already in the cart: for a new item No Frills answers
+            # ITEM_NOT_FOUND. Do what the website does — add it, then set the substitution.
+            if substitution is None or quantity == 0 or exc.code != "ITEM_NOT_FOUND":
+                raise
+            await self.set_cart_quantity(product_id, quantity)
+            try:
+                data = await self._call("cart_update", "POST", f"/v1/carts/{cart_id}", body={"entries": {product_id: entry}}, auth=True)
+            except RetailerError as exc2:
+                raise RetailerError(f"Added to the cart, but the substitution setting wasn't saved: {exc2}", code=exc2.code) from exc2
         errors = (data.get("errors") if isinstance(data, dict) else None) or []
         if errors:
             raise RetailerError(f"Retailer reported cart errors: {json.dumps(errors)[:300]}")
