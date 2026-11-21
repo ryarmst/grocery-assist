@@ -105,7 +105,8 @@ class Provider(Protocol):
   `STORE_ID`, `TZ`.
 - Firewall: 443 (and 80 for certificate challenges) open; SSH by key only, or Tailscale-only SSH.
   Unattended security upgrades.
-- Optional mTLS: Caddy `client_auth { mode require_and_verify; trust_pool file /certs/ca.pem }` on `/api/*`.
-  `grocery cert issue --device NAME` creates a per-device P12 for desktop browsers.
+- mTLS (planned as required; spike S4): Caddy `client_auth { mode require_and_verify; trust_pool file /certs/ca.pem }`
+  on `/api/*`. `grocery cert issue --device NAME` creates a per-device P12 for Firefox. The app keeps
+  the revocation list Caddy reads.
 - Migration from v1: copy `app.db` to the VPS (the schema carries forward); rotate the No Frills token by
   logging in again; v1 on the Plex box stays up read-only until cut-over.

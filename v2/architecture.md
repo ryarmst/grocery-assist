@@ -43,8 +43,8 @@ anyone who still wants to use Claude Desktop or Claude Code directly.
    access token (15 minutes, kept only in memory).
 2. Each API call carries `Authorization: Bearer <token>`. When it expires, the extension repeats step 1
    automatically.
-3. Revoking a device on the server ends its access immediately. With optional mTLS, Caddy also requires
-   that device's client certificate before the app sees anything.
+3. Revoking a device on the server ends its access immediately. With mTLS (planned as required), Caddy
+   also refuses any connection without that device's client certificate, before the app sees anything.
 
 ### Keeping the No Frills session connected
 - The extension has the `cookies` permission for `*.nofrills.ca`. When the `AccessToken` cookie changes
@@ -112,7 +112,8 @@ Tools call v1's core functions in-process, so they're fast with no extra auth ho
 
 ### Model choice and fallbacks
 - Each playbook can name a model tier (`fast` or `smart`), mapped in settings to a provider and model.
-  Example: fast = Gemini Flash (free), smart = Claude Sonnet or GPT.
+  Default (decided): fast = Gemini Flash on the free tier. smart = optional paid model (Claude Sonnet, GPT,
+  paid Gemini Pro), used only for playbooks that S5 shows need it.
 - If a provider errors or hits a rate limit, the loop retries once, then falls back to the next
   configured provider, and says so in the chat.
 - An **eval suite** of about 20 scripted household tasks (with fixed catalogue and Notion fixtures) scores
@@ -129,13 +130,13 @@ Tools call v1's core functions in-process, so they're fast with no extra auth ho
 
 | Threat | Control |
 |---|---|
-| Internet scanning and brute force | Only 443 open (SSH by key, or behind Tailscale). Every `/api` route requires device auth. Rate limits and lockout on auth endpoints. No server-rendered UI. |
-| Stolen API credential | Device keys can't be exported; access tokens live 15 minutes in memory; devices are revocable; optional mTLS on desktop. |
+| Internet scanning and brute force | Only 443 open (SSH by key, or behind Tailscale). Caddy rejects connections without a client certificate; every `/api` route also requires device auth. Rate limits and lockout on auth endpoints. No server-rendered UI. |
+| Stolen API credential | Two locks: a client certificate (mTLS) and a device key that can't be exported. Access tokens live 15 minutes in memory; devices are revocable. |
 | Database or backup leak | Secrets are encrypted with AES-GCM under a master key that lives in the environment and never in the DB or backups. Backups are encrypted too. |
 | The No Frills token used beyond our purpose | The retailer client calls only an **allowlist** of endpoints (v1 already does this). There is no code path to checkout, payment or timeslots. The token is never logged and never returned by the API. |
 | Prompt injection (Notion pages, product text, recipes pasted from the web) | Tool results are framed as data. Tiered permissions: anything consequential needs a human tap. No tool can reach arbitrary URLs, so data can't be sent out. Recipe import is a human paste, not a fetch. |
 | Runaway cost | Daily and monthly token budgets per provider; per-turn step limit (for example 12 tool calls); hard stop with a clear message. |
-| A malicious or buggy extension update | The extension is self-built and loaded unpacked (or signed but unlisted for Firefox). Minimal permissions: `cookies`, `storage`, `alarms`, `sidePanel`, host access to `*.nofrills.ca` and the server only. No content scripts are needed for the main features. |
+| A malicious or buggy extension update | The extension is self-built and signed as an unlisted Firefox add-on, with updates from the server. Minimal permissions: `cookies`, `storage`, `alarms`, host access to `*.nofrills.ca` and the server only. No content scripts are needed for the main features. |
 | Supply chain | Pinned dependencies with hashes; a small dependency set (two thin LLM adapters instead of a large multi-provider library). |
 
 Everything the agent does is recorded in an **audit log**: tool calls, external writes and model and cost

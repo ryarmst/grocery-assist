@@ -1,15 +1,15 @@
 # Browser extension plan
 
 ## Stack
-- **WXT** (Vite-based, Manifest V3, builds Chrome and Firefox from one codebase) with TypeScript.
+- **Target: Firefox desktop** (decided). **WXT** (Vite-based, Manifest V3) with TypeScript. Chrome stays
+  possible later because WXT builds both, but nothing is designed around it.
 - **Preact** (or Svelte) for the UI. No remote code: everything is bundled, which extension CSP requires.
-- Distribution:
-  - Chrome: unpacked, or a private Chrome Web Store listing for the household.
-  - Firefox: an AMO-signed unlisted XPI, which installs on desktop and Android.
+- Distribution: an AMO-signed **unlisted** XPI (self-distributed; Firefox requires signing for permanent
+  installs). Updates come from a self-hosted `update_url` on the server.
 
 ## Permissions (minimal)
-- `storage` (settings; tokens in `storage.session`), `alarms` (inbox polling), `cookies`, `sidePanel`
-  (Chrome) / `sidebar_action` (Firefox desktop).
+- `storage` (settings; tokens in `storage.session`), `alarms` (inbox polling), `cookies`; the sidebar via
+  `sidebar_action`.
 - Host permissions: `https://*.nofrills.ca/*` (to read the session cookie) and the configured server
   origin only (added at runtime with an optional permission request).
 - No `tabs`, no `<all_urls>`, and no content scripts for the main features. (Possible later: an optional
@@ -19,7 +19,7 @@
 
 | Surface | Contents |
 |---|---|
-| **Side panel / sidebar** (main) | Chat with the agent: mode chips (Shop, Meals, Pantry, Recipes, Ask), streaming replies, tool activity lines ("Searching deals in Meat…"), confirmation cards (Approve / Edit / Skip), quick replies |
+| **Sidebar** (main) | Chat with the agent: mode chips (Shop, Meals, Pantry, Recipes, Ask), streaming replies, tool activity lines ("Searching deals in Meat…"), confirmation cards (Approve / Edit / Skip), quick replies |
 | **Tab: Plan** | This week's meals as cards: deals used, uses-up, cost/serving, effort, Cook By. Buttons: Keep, Reject (+ note), Cooked (+ rating, leftovers, note), Promote. Links to the Notion page |
 | **Tab: Run** | v1 triage UI rebuilt natively: approve, remove or switch, note, substitution note, quantity; approve all; live "adding to cart" status |
 | **Tab: Deals** | Top deals plus "your items on sale" and best per aisle, from the context API; add to cart; dismiss with a note |
@@ -28,8 +28,6 @@
 | **Popup** (toolbar) | Status at a glance: server connected, No Frills session (minutes left), inbox items. Opens the panel |
 | **Badge** | Count of inbox items needing a person (plan ready, run ready, needs session, check-ins) |
 
-On **Firefox for Android** there is no sidebar: the popup and full-tab pages take over, so every surface
-also works as a tab page.
 
 ## Background service worker
 - **Device key:** created at pairing; ECDSA P-256 with `extractable: false`; the `CryptoKey` lives in
@@ -53,14 +51,17 @@ also works as a tab page.
 3. Generate the key pair → `POST /api/pair` → success shows the device name. On failure, the code is
    unchanged and three attempts are allowed before it's burned.
 
-## Optional mTLS
-On desktop, Caddy can additionally require a per-device client certificate imported into the browser or
-OS store.
-- **Chrome:** the extension service worker's requests need the certificate auto-selected via the
-  `AutoSelectCertificateForUrls` policy, or the request fails silently. Spike S4.
-- **Firefox desktop:** prompts once per session.
-- **Firefox Android:** can't import client certificates. Those devices rely on device keys alone, so mTLS
-  can't be the only lock if Android is in scope.
+## mTLS (planned as required)
+Every device is Firefox desktop, so Caddy requires a per-device client certificate on all `/api` routes,
+on top of device keys.
+- Setup per device: `grocery cert issue --device NAME` makes a `.p12`; import it in Firefox → Settings →
+  Certificates → Your Certificates.
+- Firefox prompts to choose the certificate once per session. To avoid the prompt, set
+  `security.default_personal_cert = Select Automatically` for that profile.
+- **Spike S4** confirms the extension's background requests present the certificate. If they don't,
+  mTLS stays off and device keys are the single lock.
+- Revoking a device revokes both its key and its certificate (Caddy reads a CRL / allowlist the app
+  maintains).
 
 ## Chat UX details
 - Streaming via `fetch` and a `ReadableStream` parsing SSE. A **Stop** button cancels the request and the

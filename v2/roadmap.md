@@ -6,9 +6,9 @@
 |---|---|---|---|
 | **S1 Retailer from a VPS** | Does api.pcexpress.ca serve search, product, cart and order calls from a datacenter IP? | Rent the VPS; run v1's client against it (search, product, cart GET with a fresh token) for a few days, varying the timing | Retailer gateway falls back to a **home worker** (the Plex box runs the retailer client and syncs with the VPS) or to an **extension relay** (cart and orders go through the user's browser). No bot-protection workarounds |
 | **S2 Session capture** | Can the extension read the `AccessToken` cookie (domain, HttpOnly)? Does an open nofrills.ca tab renew it before the hour is up? | Prototype extension with `cookies.onChanged` logging (names and expiry only) | Manual "Send session" button; badge reminder when it's about to expire |
-| **S3 Device keys in MV3** | Do non-exportable WebCrypto keys survive in IndexedDB from the service worker in Chrome, Firefox and Firefox Android? | Tiny test extension | Fall back to a random device secret in `storage.local`, with a shorter life and easy revocation |
-| **S4 mTLS from the extension** | Does the service worker present a client certificate (Chrome with the auto-select policy; Firefox desktop)? | Caddy with `client_auth` plus the test extension | Keep mTLS off; device keys only |
-| **S5 Free-model quality** | Can Gemini Flash (free), Groq Llama and OpenRouter free models run the shop and meals playbooks? | Eval harness: 20 tasks with fixed fixtures, scoring tool-call correctness and output quality | Mark which playbooks need the "smart" tier; keep free models for Q&A and routing |
+| **S3 Device keys in MV3** | Do non-exportable WebCrypto keys survive in IndexedDB from the Firefox extension background? | Tiny test extension | Fall back to a random device secret in `storage.local`, with a shorter life and easy revocation |
+| **S4 mTLS from the extension** | Do the Firefox extension's background requests present the client certificate (with and without auto-select)? | Caddy with `client_auth` plus the test extension | Keep mTLS off; device keys only |
+| **S5 Free-model quality** | Can Gemini Flash (free, the chosen default) run the shop and meals playbooks? Compare with Groq Llama and OpenRouter free models as backups | Eval harness: 20 tasks with fixed fixtures, scoring tool-call correctness and output quality | Mark which playbooks need the "smart" tier; keep free models for Q&A and routing |
 | **S6 Notion API** | Data-source endpoints, relation writes, status property updates, rate limits on your plan | Script against a duplicated test teamspace | Adjust schema (e.g. select instead of status) |
 
 ## Phase 1: secure server core (API-first)
@@ -40,7 +40,7 @@
   effort "low".
 
 ## Phase 5: polish and hardening
-- Optional mTLS; Firefox Android pass; ntfy push; price alerts on watched items; recipe-to-product
+- ntfy push (if wanted); price alerts on watched items; recipe-to-product
   mapping so plans price themselves; the MCP endpoint behind device auth for Claude Desktop users.
 
 ## Rough size

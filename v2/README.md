@@ -1,7 +1,7 @@
 # grocery-assist v2: design
 
-Status: **draft for review** (2026-11-20). Nothing here is built yet. Open questions are at the end; answers
-change the design where noted.
+Status: **draft, first decisions made** (2026-11-20). Nothing here is built yet. Decisions are recorded below;
+the remaining open questions are at the end.
 
 v2 moves the app from a LAN box to an internet-facing VPS. A browser extension becomes the only client.
 The server runs the shopping app, an LLM agent that can use several providers, and a Notion client. The
@@ -47,35 +47,30 @@ These come from what the household wants: eat well for less, with little effort 
 
 | Topic | Proposal | Why |
 |---|---|---|
-| Client auth | **Paired devices with a hardware-style key**: the extension creates a key it can't export, the server registers its public half using a one-time pairing code, and every session is proven by a signature. Optional mTLS at the proxy where browsers support it | As strong as an API key but can't be copied out of the extension. Works on Firefox for Android, where client certificates don't |
+| Client | **Firefox desktop only** (decided). Sidebar for chat, tab pages for everything else | One target keeps the extension simple |
+| Client auth | **Two locks: mTLS at the proxy plus paired device keys.** Each device has a client certificate (Caddy rejects anything without one), and the extension also holds a key it can't export, registered with a one-time pairing code; each session is proven by a signature. If spike S4 shows Firefox's extension background can't present the certificate, device keys alone | With Firefox desktop as the only client, every device can hold a certificate, so the internet sees nothing without one |
 | Exposure | Caddy with automatic HTTPS; only port 443 open; no web UI on the server, only a JSON API | Smallest possible attack surface |
-| LLM providers | Two adapters: **OpenAI-compatible** (covers Gemini's free tier, Groq, OpenRouter, OpenAI, Mistral, local Ollama) and **Anthropic native** | Covers almost every provider without a heavy dependency |
+| LLM providers | Two adapters: **OpenAI-compatible** (covers Gemini's free tier, Groq, OpenRouter, OpenAI, Mistral, local Ollama) and **Anthropic native**. **Default: Gemini Flash on the free tier** (decided: you accept that Google may use prompts), with a paid "smart" model available for heavier tasks | Covers almost every provider without a heavy dependency |
 | Provider keys | Entered in the extension, sent once, **stored encrypted on the server only**, write-only (the client sees "set, ends …a1b2") | Matches "configurable from the client, not stored there" |
 | Notion | The official Notion API with an **internal integration token** shared with exactly four databases | Least privilege; no MCP needed on the server |
-| Retailer access | Server-side, as in v1, **if No Frills accepts the VPS's IP** (spike S1). Fallback: retailer calls go through a home worker or through the extension | Akamai risk |
+| Retailer access | Server-side, as in v1, **if No Frills accepts the VPS's IP** (spike S1). The fallback (home worker on Plex, or relay through the extension) is **decided after the test** | Akamai risk |
 | Codebase | Evolve v1 in place: the core (retailer client, catalogue, runs, feedback, orders) carries over. Add `server/api`, `server/agent` and `server/notion`, plus a new `extension/` | v1's core is tested and working; a rewrite would throw that away |
 | Storage | SQLite (WAL) with Litestream, or nightly encrypted backups to object storage | One household; simple and enough |
 
+## Decisions so far
+- Browser: **Firefox desktop** only.
+- Default LLM: **Gemini Flash, free tier** (prompts may be used by Google; no payment details are ever sent).
+- If the VPS is blocked by No Frills: **decide after spike S1**.
+- Promotion to Cooking and `Regular Recipe?` are **separate decisions** (the agent offers the second).
+
 ## Open questions
-
-The ones that change the design are marked ◆.
-
-1. ◆ **Browsers.** Which do you need: Chrome desktop, Firefox desktop, Firefox on Android? (iOS Safari
-   needs a separate app wrapper, so it's out of scope unless you say otherwise.) Android rules out mTLS
-   as the only lock and rules out a side panel there.
-2. ◆ **LLM privacy.** Gemini's free tier may use prompts to improve Google's products. Prompts would
-   include household meal and shopping data, with no payment details. Is that acceptable for a default,
-   or should the default be a paid tier or a provider that doesn't train on data?
-3. ◆ **VPS location.** Canada (closer to the store, and Akamai may judge a Canadian IP more kindly) or
-   wherever's cheapest? And is a home worker on the Plex box acceptable as the fallback if the VPS gets
-   blocked?
-4. **Who uses it.** Just you and Steph? Should notes and ratings record who made them? (The design
+1. **Who uses it.** Just you and Steph? Should notes and ratings record who made them? (The design
    assumes yes: each paired device has a name.)
-5. **Promotion.** When a suggested meal is promoted to Cooking, should it also become a `Regular Recipe?`
-   automatically, or is that a separate decision? (Proposed: separate, with an offer.)
-6. **Notifications.** Is the extension badge enough, or do you also want phone push (for example ntfy)
-   when the weekly plan is ready?
-7. **Spend cap.** What monthly LLM budget should the server enforce? (Proposed default: $10, with a
-   warning at 80%.)
-8. **v1.** Should the Plex instance keep running until v2 is proven (proposed), with its data migrated
+2. **Notifications.** Is the extension badge enough, or do you also want phone push (for example ntfy)
+   when the weekly plan is ready? (A phone isn't a client, but it could still get a heads-up.)
+3. **Spend cap.** Mostly moot on the free tier; for the paid "smart" model, what monthly cap? (Proposed: $10,
+   with a warning at 80%.)
+4. **v1.** Should the Plex instance keep running until v2 is proven (proposed), with its data migrated
    at cut-over?
+5. **Groceries ↔ meals.** Do you want the optional `For Meals` relation on Groceries (see
+   notion-suggested-meals.md)? It lets a rejected meal's ingredients be dropped before they're bought.
