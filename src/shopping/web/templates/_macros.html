@@ -56,6 +56,7 @@
     {% if sel.rationale %}<p class="rationale">{{ sel.rationale }}</p>{% endif %}
     {% if sel.last_error and sel.status == 'failed' %}<div class="error-line">Cart update failed: {{ sel.last_error }}</div>{% endif %}
     {% for f in card.feedback %}<div class="fb-line">✎ {{ f.action.replace('_', ' ') }}{% if f.tag_labels %} — {{ f.tag_labels | join(', ') }}{% endif %}{% if f.note %}: “{{ f.note }}”{% endif %}</div>{% endfor %}
+    {% if sel.substitution_allowed or sel.substitution_note %}<div class="fb-line">⇄ Substitutes {{ 'OK' if sel.substitution_allowed else 'off' }}{% if sel.substitution_note %}: “{{ sel.substitution_note }}”{% endif %}</div>{% endif %}
 
     {% if editable and sel.status == 'pending' %}
     <form method="post" action="/runs/{{ run.id }}/selections/{{ sel.id }}/triage" class="triage-form">
@@ -82,34 +83,9 @@
 
       <div class="subs-row small">
         <label class="inline-check"><input type="checkbox" name="sub_allowed" value="1" {{ 'checked' if sel.substitution_allowed }}> Substitutes OK if unavailable</label>
-        <input type="text" name="sub_note" value="{{ sel.substitution_note or '' }}" placeholder="note for the shopper, e.g. any brand, same size" maxlength="250">
+        <input type="text" name="sub_note" value="{{ sel.substitution_note or '' }}" placeholder="what's an OK substitute? e.g. any brand, same size" maxlength="250">
       </div>
-      <details class="why" {{ 'open' if mode == 'triage' }}>
-        <summary>Why? <span class="muted small">(optional — reasons are saved for later review)</span></summary>
-        <div class="chip-group"><span class="chip-head">Removing</span>
-          {% for code, label in FEEDBACK_TAGS.removed.items() %}<label class="chip"><input type="checkbox" name="tags" value="{{ code }}"><span>{{ label }}</span></label>{% endfor %}
-        </div>
-        {% if is_group %}
-        <div class="chip-group"><span class="chip-head">Picking another option</span>
-          {% for code, label in FEEDBACK_TAGS.chose_alternative.items() %}<label class="chip"><input type="checkbox" name="tags" value="{{ code }}"><span>{{ label }}</span></label>{% endfor %}
-        </div>
-        {% endif %}
-        <div class="chip-group"><span class="chip-head">Keeping</span>
-          {% for code, label in FEEDBACK_TAGS.approved.items() %}<label class="chip"><input type="checkbox" name="tags" value="{{ code }}"><span>{{ label }}</span></label>{% endfor %}
-          <label class="chip"><input type="checkbox" name="tags" value="other"><span>Other</span></label>
-        </div>
-        <textarea name="note" class="note" placeholder="In your words — e.g. “still have two jars”, “kids won't eat the light version”"></textarea>
-        <label class="small muted rule">Also make it a rule:
-          <select name="rule">
-            <option value="">— no rule —</option>
-            <option value="prefer_product">Prefer this product{{ ' (the one I picked)' if is_group }}</option>
-            <option value="prefer_brand">Prefer this brand{{ ' (of the one I picked)' if is_group }}</option>
-            <option value="prefer_for_type">Use this for “{{ sel.requirement or 'this item' }}”</option>
-            <option value="blacklist_product">Don't suggest this product again</option>
-            <option value="blacklist_brand">Don't suggest this brand again</option>
-          </select>
-        </label>
-      </details>
+      <textarea name="note" class="note" rows="2" placeholder="Note for the agent (optional) — why you're keeping, removing or switching, e.g. “still have two jars”, “prefer the sourdough”, “never this brand”"></textarea>
 
       <div class="actions">
         <label class="small muted">Qty <input type="number" name="quantity" value="{{ sel.quantity | qty }}" min="{{ '0.1' if m.p.sold_by == 'weight' else '1' }}" step="{{ 'any' if m.p.sold_by == 'weight' else '1' }}"></label>

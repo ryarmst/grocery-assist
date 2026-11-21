@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import contextlib
 import hmac
 import logging
@@ -15,8 +16,9 @@ from starlette.responses import JSONResponse
 
 from shopping import context
 from shopping.config import settings
+from shopping.core import catalog
 from shopping.core.cart_queue import queue as cart_queue
-from shopping.database import run_migrations
+from shopping.database import run_migrations, session_scope
 from shopping.logging_setup import setup_logging
 from shopping.mcp_server.server import mcp
 from shopping.web.routes import SameOriginPostMiddleware, router
@@ -58,9 +60,17 @@ async def lifespan(_: FastAPI):
     if not settings.pcx_api_key:
         log.warning("PCX_API_KEY is not set; retailer calls will fail (see README).")
     cart_queue.start()
+    scanner = None
+    if settings.deal_scan_hours > 0:
+        scanner = asyncio.create_task(catalog.scan_loop(context.client, session_scope, store_id=settings.store_id,
+                                                        every_hours=settings.deal_scan_hours), name="deal-scan")
     async with mcp.session_manager.run():
         log.info("shopping assistant ready: store=%s data=%s mcp=/mcp auth=%s", settings.store_id, settings.data_dir, context.auth.status().state)
         yield
+    if scanner:
+        scanner.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await scanner
     await cart_queue.stop()
     await context.shutdown()
 

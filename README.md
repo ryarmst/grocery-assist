@@ -58,8 +58,16 @@ keeps the Notion pantry current and writes the Groceries list this app shops fro
 
 ### How the agent uses it
 
-1. Read preferences and past feedback → `shopping_get_preferences`, `shopping_get_feedback`
-2. Find products and deals → `shopping_search_products`, `shopping_get_deals`, `shopping_get_product`
+1. Get the picture in one call → `shopping_get_context`:
+   - what's on sale now (a daily background scan of every aisle);
+   - your own items on sale;
+   - the best deals per aisle, ranked toward what you buy;
+   - your recent review notes.
+   
+   `focus: "meals"` groups deals for meal planning (protein, produce, dairy…).
+2. Find products → `shopping_search_catalog` (everything seen at the store, by aisle, instant),
+   `shopping_list_aisles`, then live `shopping_search_products` / `shopping_get_product`;
+   `shopping_get_deals`, `shopping_refresh_deals`, `shopping_get_preferences`, `shopping_get_feedback`
 3. Check history → `shopping_get_product_history`, `shopping_get_requirement_history` (is a regular item due?)
 4. Stage a run → `shopping_create_run`, `shopping_add_selection`, `shopping_add_choice_group` (several options,
    one recommended), `shopping_update_selection`, `shopping_submit_run_for_review` → returns a review URL.
@@ -67,7 +75,8 @@ keeps the Notion pantry current and writes the Groceries list this app shops fro
    harmless)
    Standout prices on things not needed this week → `shopping_add_top_deal` (the Deals page);
    `shopping_get_top_deals` shows what you added or dismissed, and why; `shopping_retire_top_deal`
-5. **You** triage it in the web UI; approved items go into the cart
+5. **You** triage it in the web UI (approve, remove or switch, with an optional note in your own words);
+   approved items go into the cart in the background
 6. Learn from your review → `shopping_get_feedback`, then `shopping_mark_feedback_reviewed` once the lesson
    is saved (the skill writes it to Notion's Shopping Preferences)
 

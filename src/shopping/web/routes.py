@@ -19,6 +19,7 @@ from shopping.auth.session import AuthRequired
 from shopping.config import settings
 from shopping.core import activity as act
 from shopping.core.cart_queue import queue as cart_queue
+from shopping.core import catalog
 from shopping.core import deals as dls
 from shopping.core import feedback as fbk
 from shopping.core import modify as mod
@@ -110,6 +111,13 @@ def _auth_ctx() -> dict:
 
 def _connected() -> bool:
     return context.auth.status().state == "connected"
+
+
+def _subs_allowed(checkbox: str, note: str, previous_note: str | None) -> bool:
+    """Substitutes are OK when the box is ticked, or when the user typed (or changed) a description of an
+    acceptable substitute. A note that was only pre-filled doesn't override unticking the box."""
+    typed = note.strip()
+    return bool(checkbox) or bool(typed and typed != (previous_note or "").strip())
 
 
 def _to_add(session, run_id: str, sel_ids: list[str] | None) -> list[str]:
@@ -226,23 +234,23 @@ def triage_page(request: Request, run_id: str, skipped: str = ""):
 
 
 @router.post("/runs/{run_id}/selections/{sel_id}/triage")
-async def triage_submit(run_id: str, sel_id: str, decision: str = Form(...), option: str = Form(""), tags: list[str] = Form([]),
-                        note: str = Form(""), rule: str = Form(""), quantity: float | None = Form(None), return_to: str = Form("run"),
-                        skipped: str = Form(""), sub_allowed: str = Form(""), sub_note: str = Form("")):
+async def triage_submit(run_id: str, sel_id: str, decision: str = Form(...), option: str = Form(""), note: str = Form(""),
+                        quantity: float | None = Form(None), return_to: str = Form("run"), skipped: str = Form(""),
+                        sub_allowed: str = Form(""), sub_note: str = Form("")):
+    """One review decision. Reasons are free text: the agent reads the note and infers preferences itself."""
     ids: list[str] = []
     with session_scope() as session:
         try:
             if decision == "keep" and option and option != sel_id:
                 decision = "choose"
             if decision in ("keep", "choose"):
-                # Substitution preference for the item being kept (recorded as feedback if it differs from the agent's).
-                await service.set_substitution(session, context.client(), selection_id=option if decision == "choose" else sel_id,
-                                               allowed=bool(sub_allowed), note=sub_note, in_cart=False)
-            # Only keep tags that fit the decision actually taken (the form shows all chip groups).
-            action = {"keep": "approved", "remove": "removed", "choose": "chose_alternative"}.get(decision, "")
-            tags = [t for t in tags if t in FEEDBACK_TAGS.get(action, {}) or t == "other"]
-            fbk.triage(session, sel_id, decision=decision, chosen_selection_id=option or None, tags=tags, note=note,
-                       rule=rule or None, quantity=quantity)
+                # Substitution preference for the item being kept, saved on it and sent with it to the cart (and recorded
+                # as feedback if it differs from the agent's). Describing an acceptable substitute means substitutes are OK.
+                target = session.get(Selection, option if decision == "choose" else sel_id)
+                await service.set_substitution(session, context.client(), selection_id=target.id if target else sel_id,
+                                               allowed=_subs_allowed(sub_allowed, sub_note, target.substitution_note if target else None),
+                                               note=sub_note, in_cart=False)
+            fbk.triage(session, sel_id, decision=decision, chosen_selection_id=option or None, note=note, quantity=quantity)
         except service.ShoppingError as exc:
             return _back(f"/runs/{run_id}" + ("/triage" if return_to == "triage" else ""), err=str(exc))
         if decision in ("keep", "choose"):
@@ -385,8 +393,8 @@ async def modify_from_run(request: Request, run_id: str, sel_id: str, q: str | N
 
 @router.post("/modify")
 async def modify_submit(action: str = Form(...), product_id: str = Form(...), selection_id: str = Form(""), back: str = Form("/cart"),
-                        new_product_id: str = Form(""), quantity: float | None = Form(None), tags: list[str] = Form([]),
-                        note: str = Form(""), rule: str = Form(""), in_cart: str = Form(""),
+                        new_product_id: str = Form(""), quantity: float | None = Form(None),
+                        note: str = Form(""), in_cart: str = Form(""),
                         sub_allowed: str = Form(""), sub_note: str = Form("")):
     if not back.startswith("/"):
         back = "/cart"
@@ -395,13 +403,15 @@ async def modify_submit(action: str = Form(...), product_id: str = Form(...), se
             if action in ("substitution", "substitute_with"):
                 if action == "substitute_with" and not new_product_id:
                     raise service.ShoppingError("Pick a product in the list to use as the substitute.")
+                prev = session.get(Selection, selection_id) if selection_id else None
                 msg = await service.set_substitution(
                     session, context.client(), selection_id=selection_id or None, product_id=product_id,
-                    allowed=bool(sub_allowed) or action == "substitute_with", note=sub_note,
+                    allowed=_subs_allowed(sub_allowed, sub_note, prev.substitution_note if prev else None) or action == "substitute_with",
+                    note=sub_note,
                     substitute_product_id=new_product_id if action == "substitute_with" else None, in_cart=bool(in_cart))
                 return _back(back, msg=msg)
             msg = await mod.modify(session, context.client(), action=action, product_id=product_id, selection_id=selection_id or None,
-                                   new_product_id=new_product_id or None, quantity=quantity, tags=tags, note=note, rule=rule or None,
+                                   new_product_id=new_product_id or None, quantity=quantity, note=note,
                                    in_cart=bool(in_cart))
         except AuthRequired as exc:
             return _back(back, err=f"Saved in the app, but the cart wasn't changed: {exc}")
@@ -657,9 +667,18 @@ _PRODUCT_CODE = re.compile(r"(\d{6,}_[A-Z]{2,4})")
 def deals_page(request: Request):
     with session_scope() as session:
         rows = [dls.deal_dict(session, d, store_id=settings.store_id) for d in dls.list_deals(session, include_closed=True, days=30)]
+        scan = catalog.last_scan(session)
+        on_sale = session.scalar(select(func.count(Product.id)).where(*catalog.current_deals_filter())) or 0
     active = [d for d in rows if d["status"] == "active"]
     closed = [d for d in rows if d["status"] != "active"]
-    return templates.TemplateResponse(request, "deals.html", {"active": active, "closed": closed, "RATINGS": dls.RATINGS, "today": dls.today(), **_auth_ctx()})
+    return templates.TemplateResponse(request, "deals.html", {"active": active, "closed": closed, "RATINGS": dls.RATINGS, "today": dls.today(),
+                                                         "scan": scan, "on_sale": on_sale, "scanning": catalog.scan_running(), **_auth_ctx()})
+
+
+@router.post("/deals/scan")
+async def deals_scan():
+    started = catalog.start_scan(context.client(), session_scope, store_id=settings.store_id)
+    return _back("/deals", msg="Scanning every aisle for deals; this takes about 3 minutes." if started else "A scan is already running.")
 
 
 @router.post("/deals")
@@ -690,10 +709,10 @@ async def deals_to_cart(deal_id: int, quantity: float = Form(1)):
 
 
 @router.post("/deals/{deal_id}/dismiss")
-def deals_dismiss(deal_id: int, tags: list[str] = Form([]), note: str = Form("")):
+def deals_dismiss(deal_id: int, note: str = Form("")):
     with session_scope() as session:
         try:
-            dls.dismiss(session, deal_id, tags=tags, note=note)
+            dls.dismiss(session, deal_id, note=note)
         except service.ShoppingError as exc:
             return _back("/deals", err=str(exc))
     return _back("/deals", msg="Dismissed. The agent will see your reason.")

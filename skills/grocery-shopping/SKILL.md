@@ -1,6 +1,6 @@
 ---
 name: grocery-shopping
-description: Build Ryan's No Frills grocery order for review and learn from how he reviews it. Reads the Groceries list (with Quantity) and the Kitchen Pantry and Storage inventory from Notion (Regular Purchase?, Shopping Preferences, Store Preference), uses the shopping-assistant MCP tools to search products, check deals, price history, past feedback and saved rules, stages a shopping run that Ryan triages in the web UI (approving puts items in the cart) with a per-item substitution preference, imports placed orders to see what was actually bought, and afterwards distills his removals, swaps, substitution choices and notes into the pantry's Shopping Preferences and Store Preference fields. Use whenever Ryan asks to go grocery shopping, do the weekly order, restock, fill the cart, check what regular items are due, see what's on sale at No Frills, flag or list top deals, look at a past order or what he bought, set or change substitutions, or update his shopping preferences from feedback, even if he doesn't say "shopping run".
+description: Build Ryan's No Frills grocery order for review and learn from how he reviews it. Reads the Groceries list (with Quantity) and the Kitchen Pantry and Storage inventory from Notion (Regular Purchase?, Shopping Preferences, Store Preference), uses the shopping-assistant MCP tools for a store-wide view of current deals ranked against the household's buying history (shopping_get_context), a categorised product catalogue, live search, price history and past feedback, stages a shopping run that Ryan triages in the web UI (approving puts items in the cart) with a per-item substitution preference, imports placed orders to see what was actually bought, and afterwards distills his removals, swaps, substitution choices and notes into the pantry's Shopping Preferences and Store Preference fields. Use whenever Ryan asks to go grocery shopping, do the weekly order, restock, fill the cart, check what regular items are due, see what's on sale at No Frills, flag or list top deals, look at a past order or what he bought, plan the week's shopping around this week's deals (with meal-planner), set or change substitutions, or update his shopping preferences from feedback, even if he doesn't say "shopping run".
 ---
 
 # Grocery shopping
@@ -86,6 +86,20 @@ doesn't track stock levels; treat its rows as hints. Ryan's message beats Notion
 
 ### 2. Learn before choosing
 
+- **Context first.** `shopping_get_context` gives the whole picture in one call:
+  - `your_items_on_sale`: things the household has bought, on sale now. These are the strongest
+    candidates.
+  - `top_deals_by_aisle`: the best other deals, boosted when they're the kind of thing Ryan buys.
+    Anything he removed twice, blacklisted or dismissed is already filtered out.
+  - `recent_review_notes`: his own words from recent reviews.
+  - `deal_data`: how fresh the store-wide scan is. If `last_scan` is missing or older than ~2 days, call
+    `shopping_refresh_deals` (about 3 minutes, runs in the background) and carry on; re-read the context
+    before the hand-off.
+- **Catalogue vs. live:** `shopping_search_catalog` searches everything the app has seen at this store
+  (aisle, category, latest price and deal, how often Ryan bought it), which is good for "what do we usually
+  buy" or "what's on sale in Meat". Its prices are as of `price_seen`, so confirm live with
+  `shopping_search_products` / `shopping_get_product` before staging. Staging refuses out-of-stock products.
+
 - **Unsynced feedback first.** If `shopping_get_feedback` with `unreviewed_only: true` returns records,
   run *Learning from reviews* (below) before building the run — or at least apply what they say to this
   run, and offer the Notion update at hand-off.
@@ -100,8 +114,9 @@ doesn't track stock levels; treat its rows as hints. Ryan's message beats Notion
 
 ### 3. Deals
 
-`shopping_get_deals` with `kind: "flyer"` once broadly, then with `query` for the main categories you
-need; `price_reduction` for staples. A retailer SALE tag isn't proof of a good price — use our
+Start from `shopping_get_context` (above): it already covers every aisle's price reductions, the flyer
+and PC Optimum offers. Use `shopping_get_deals` (with `query` / `category_code`) or
+`shopping_search_catalog` with `on_sale_only` to dig into one need. A retailer SALE tag isn't proof of a good price — use our
 `history` (`min_price`, `avg_90d`, `vs_avg_90d_pct`, `is_lowest_observed`). `package_size_changed`
 means compare unit prices: same price for a smaller pack is a price increase.
 
@@ -240,21 +255,26 @@ both skills — and Ryan — can use it.
      `Buy when: whole chickens on sale (happy to break down)` + Store Preference → Costco.
    - Removed bread, "prefer sourdough or Italian" → `Prefer: sourdough or Italian loaf` +
      `Avoid: packaged multigrain sandwich loaves`.
-   - Tags without a note: `buy_elsewhere` → propose Store Preference (ask which store);
-     `wrong_size`/`better_size` → a `Size:` line naming the chosen size; `dislike_product`/`quality`
-     → `Avoid:` the product; `have_enough` → no Notion change (it's cadence — the app's requirement
-     history already uses it).
+   - **Reasons are free text.** Ryan writes a note instead of picking from a list, and the app no longer
+     makes rules itself, so infer from his words. "Still have two jars" / "have enough" is cadence: no
+     Notion change, since requirement history already uses it. "We get this at Costco" → Store
+     Preference. "Wrong size" / "get the big one" → a `Size:` line. "Didn't like it" / "poor quality" →
+     `Avoid:`. "Always this one" → `Prefer:`. "Never this brand" → `Avoid:` the brand; for a hard
+     blacklist across all items, also record it with `shopping_add_preference_note`. Older records may
+     still carry tags (`buy_elsewhere`, `wrong_size`…); read them the same way. When a note is ambiguous,
+     ask; don't guess.
+   - Substitution details Ryan types while reviewing are saved on the item, sent to the shopper, and
+     kept in the feedback snapshot (`substitution`); a typed note means "substitutes OK".
    - `substitution_changed` (Ryan overrode your substitution choice): one-off → nothing; the same direction
      twice (it shows as a pattern) → `Subs: never` or `Subs: OK — <his note>`.
    - Order outcomes: a substitution Ryan says was fine → `Subs: OK — <what was substituted>`; one he
      disliked → `Subs: never`. Something he keeps adding on nofrills.ca himself (e.g. Stonemill sourdough)
      → a `Prefer:` line. Items dropped at checkout → treat as bare removals.
    - `deal_dismissed` (Ryan passed on a Top deal; also visible in `shopping_get_top_deals` as `response_note`):
-     `not_a_deal` → a `Buy when:` line with the price he'd want (ask if unclear); `buy_elsewhere` → Store
-     Preference; `dislike_product`/`dislike_brand` → `Avoid:`; `not_interested` → stop flagging that kind of
-     item (no pantry row? record it with `shopping_add_preference_note`); `have_enough` → nothing, it was
-     timing. Deals with status `added_to_cart` are the positive signal: that's the kind of deal to keep flagging.
-   - Bare removals (no tags, no note) carry no preference. Ask once, grouped: "Why did these come
+     read his note the same way. "Not a deal" → a `Buy when:` line with the price he'd want (ask if
+     unclear); "not something we buy" → stop flagging that kind of item (no pantry row? record it with
+     `shopping_add_preference_note`); "have plenty" → nothing, it was timing. Deals with status `added_to_cart` are the positive signal: that's the kind of deal to keep flagging.
+   - Bare removals (no note) carry no preference. Ask once, grouped: "Why did these come
      out — have enough, buy elsewhere (Costco?), or don't want them?" Don't guess.
 3. **Map to pantry rows** by name. Merge with the row's existing Shopping Preferences: drop duplicates,
    replace contradicted lines, keep ≤ ~6 lines. If an item has **no pantry row** (e.g. chicken thighs,
@@ -276,6 +296,21 @@ both skills — and Ryan — can use it.
 6. **Mark synced:** `shopping_mark_feedback_reviewed` with the record ids and a resolution like
    "Notion: Bread → Shopping Preferences". Records Ryan declined → resolution "Declined; app only".
    Records with nothing to learn (bare `have_enough`) → "Cadence only".
+
+## Planning the week around deals (with meal-planner)
+
+meal-planner owns the meals; this skill owns the run. When Ryan asks to plan the week, "shop and suggest
+meals", or a scheduled run fires:
+1. meal-planner reads `shopping_get_context` (`focus: "meals"`), proposes meals around the protein and
+   produce deals, and produces the ingredient list (it writes Groceries rows unless running proactively).
+2. Build the run from that list as usual, with the deal behind each meal as reason `good_deal` plus a
+   rationale naming the meal ("for carnitas, bulk: pork picnic $6.61/kg").
+3. Hand off with the meals and the review URL together.
+
+When running proactively (on a schedule):
+- Stage the run and report it; never apply to the cart yourself.
+- Flag at most a handful of Top deals.
+- Keep the run lean, so Ryan can approve it in a couple of minutes.
 
 ## Preferences stated in chat
 

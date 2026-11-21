@@ -45,10 +45,16 @@ Suggested next steps, roughly in priority order.
 - [ ] Price alerts: watch items with Shopping Preferences and flag when they hit a new low.
 - [ ] Multi-store: record Costco (or other store) prices manually or from receipts so "Store Preference"
       can be compared with real numbers.
-- [ ] Close the loop after checkout: import the order/receipt to mark what was actually bought, feeding
-      requirement cadence and Notion Groceries (`Purchased`).
+- [ ] **Proactive weekly plan.** Every Thursday (new flyer): refresh deals, have meal-planner propose
+      ~5 meals around the protein and produce deals, stage the run, and notify with the meal list + review
+      link. Today this works when asked ("plan the week around the deals"); scheduling it needs a runner,
+      e.g. a Claude scheduled task, or:
 - [ ] Agent runner + "Prompts" page on the server (Claude Agent SDK, only the grocery MCP and a Notion MCP
       with an integration token limited to Groceries + Pantry), with an optional weekly schedule.
+- [ ] Categorise products only ever seen in search results (the scan and product pages categorise the
+      rest): look them up lazily in the background.
+- [ ] Recipes ↔ products: map Shopping Ingredients names to the products usually bought for them, so
+      meal plans can price themselves from the catalogue.
 
 ## 5. Housekeeping
 

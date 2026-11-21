@@ -20,6 +20,7 @@ from sqlalchemy import select
 from shopping import context
 from shopping.auth.session import AuthRequired
 from shopping.config import settings
+from shopping.core import catalog as cat
 from shopping.core import deals as dls
 from shopping.core import feedback as fbk
 from shopping.core import orders as ords
@@ -32,7 +33,10 @@ log = logging.getLogger("shopping.mcp")
 
 INSTRUCTIONS = f"""\
 Grocery shopping assistant for No Frills (store {settings.store_id}). Workflow:
-1. shopping_get_preferences, then search products / deals (prices include our own history where available).
+1. Start with shopping_get_context: what's on sale now (from a daily scan of every aisle), the household's own
+   items on sale, the best deals per aisle ranked toward what they buy, and recent review notes. For meal
+   planning use focus="meals". shopping_search_catalog searches everything we've seen (fast, no retailer call);
+   shopping_search_products gets live prices. Then shopping_get_preferences.
 2. shopping_create_run, then stage items with shopping_add_selection (one product) or
    shopping_add_choice_group (several candidate products for one requirement, with a recommendation).
    Always give reason codes and a short rationale. Reason codes: {", ".join(REASON_CODES)}.
@@ -496,6 +500,61 @@ async def shopping_retire_top_deal(
     """Take a deal off the Deals page (it stays in history)."""
     with session_scope() as session:
         return {"deal": dls.deal_dict(session, dls.retire(session, deal_id, reason), store_id=settings.store_id)}
+
+
+# -------------------------------------------------------------------------------------
+# Catalogue and deal context
+# -------------------------------------------------------------------------------------
+
+@mcp.tool()
+@logged
+async def shopping_get_context(
+    focus: Annotated[str, Field(description="'overview' (all aisles) or 'meals' (proteins, produce, dairy, pantry, frozen, grouped for meal planning)")] = "overview",
+    aisles: Annotated[list[str] | None, Field(description="Only these aisles, e.g. ['Meat', 'Fish & Seafood'] (names from shopping_list_aisles)")] = None,
+    per_aisle: Annotated[int, Field(ge=1, le=20, description="Deals per aisle/group")] = 6,
+) -> dict:
+    """Start here. Current deals ranked against the household's history: `your_items_on_sale` (things they've
+    bought, on sale now), the best other deals per aisle (boosted when it's the kind of thing they buy; anything
+    they've turned down is excluded), recent review notes in their own words, and how fresh the deal data is."""
+    with session_scope() as session:
+        return cat.shopping_context(session, focus=focus, aisles=aisles, per_aisle=per_aisle)
+
+
+@mcp.tool()
+@logged
+async def shopping_search_catalog(
+    query: Annotated[str, Field(description="Words to match in name, brand or category, e.g. 'chicken thigh'")] = "",
+    aisle: Annotated[str | None, Field(description="Limit to one aisle, e.g. 'Meat'")] = None,
+    on_sale_only: bool = False,
+    bought_before_only: Annotated[bool, Field(description="Only products the household has bought")] = False,
+    limit: Annotated[int, Field(ge=1, le=100)] = 30,
+) -> dict:
+    """Search every product we've seen at this store, with its latest known price/deal, category and the
+    household's purchase count. Instant (no retailer call), but prices are as of `price_seen`: confirm live
+    with shopping_get_product or shopping_search_products before staging."""
+    with session_scope() as session:
+        rows = cat.search_catalog(session, query=query, aisle=aisle, on_sale_only=on_sale_only, bought_only=bought_before_only, limit=limit)
+    return {"returned": len(rows), "results": rows}
+
+
+@mcp.tool()
+@logged
+async def shopping_list_aisles() -> dict:
+    """The store's aisle tree (department > aisle > sub-aisle) with how many products we know and how many are on sale."""
+    with session_scope() as session:
+        return {"aisles": cat.aisle_tree(session), "last_scan": cat.scan_dict(cat.last_scan(session))}
+
+
+@mcp.tool()
+@logged
+async def shopping_refresh_deals() -> dict:
+    """Start a fresh scan of every aisle's deals (about 3 minutes, runs in the background; it also runs daily on
+    its own). Check progress with shopping_get_context's deal_data."""
+    with session_scope() as session:
+        last = cat.scan_dict(cat.last_scan(session, done_only=False))
+    if not cat.start_scan(context.client(), session_scope, store_id=settings.store_id):
+        return {"started": False, "message": "A scan is already running.", "last_scan": last}
+    return {"started": True, "message": "Scanning deals; ready in about 3 minutes.", "previous_scan": last}
 
 
 def tool_names() -> list[str]:

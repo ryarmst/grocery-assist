@@ -2,12 +2,6 @@
 {% from "_events.html" import events_table with context %}
 {% block title %}Modify · {{ product.name }}{% endblock %}
 
-{% macro reason_block(group, title) %}
-  <div class="chip-group"><span class="chip-head">{{ title }}</span>
-    {% for code, label in FEEDBACK_TAGS[group].items() %}<label class="chip"><input type="checkbox" name="tags" value="{{ code }}"><span>{{ label }}</span></label>{% endfor %}
-    <label class="chip"><input type="checkbox" name="tags" value="other"><span>Other</span></label>
-  </div>
-{% endmacro %}
 
 {% block content %}
 <p class="small"><a href="{{ back }}">← Back</a></p>
@@ -98,27 +92,14 @@
           <span class="muted">{{ unit_price(p.unit_price, p.unit_price_basis) }}</span></span>
       </label>
     {% else %}{% if not search_error %}<p class="muted small">No results.</p>{% endif %}{% endfor %}
-    {{ reason_block('chose_alternative', 'Why swap? (optional)') }}
     <div class="actions"><span class="spacer"></span>
       <button name="action" value="substitute_with">Use as substitute</button>
       <button class="primary" name="action" value="swap">Swap{{ ' in cart' if cart_line }}</button></div>
   </section>
 
   <section class="card">
-    <h2 class="card-title">Reasons, notes and rules</h2>
-    {{ reason_block('removed', 'Why remove? (optional)') }}
-    {{ reason_block('approved', 'Keeping it') }}
-    <textarea name="note" class="note" placeholder="In your words — saved with whichever button you press"></textarea>
-    <label class="small muted rule">Also make it a rule:
-      <select name="rule">
-        <option value="">— no rule —</option>
-        <option value="prefer_product">Prefer this product (or the one I swap to)</option>
-        <option value="prefer_brand">Prefer this brand (or the one I swap to)</option>
-        <option value="prefer_for_type">Use this (or the one I swap to) for “{{ (sel.requirement if sel and sel.requirement) or product.name }}”</option>
-        <option value="blacklist_product">Don't suggest this product again</option>
-        <option value="blacklist_brand">Don't suggest this brand again</option>
-      </select>
-    </label>
+    <h2 class="card-title">Note for the agent</h2>
+    <textarea name="note" class="note" rows="2" placeholder="Optional, in your words — saved with whichever button you press, e.g. “too pricey, wait for a sale”, “prefer the sourdough”"></textarea>
     <div class="actions">
       <span class="spacer"></span>
       <button name="action" value="note">Save note only</button>

@@ -32,6 +32,7 @@ class Settings:
     log_level: str
     mcp_token: str
     public_url: str
+    deal_scan_hours: float = 24.0  # refresh the deal catalogue this often; 0 disables the background scan
     allowed_hosts: list[str] = field(default_factory=list)
 
     @property
@@ -66,6 +67,7 @@ def load_settings() -> Settings:
         log_level=os.environ.get("LOG_LEVEL", "INFO").upper(),
         mcp_token=os.environ.get("MCP_TOKEN", ""),
         public_url=public_url,
+        deal_scan_hours=float(os.environ.get("DEAL_SCAN_HOURS", "24")),
         allowed_hosts=list(dict.fromkeys(h.strip() for h in hosts.split(",") if h.strip())),
     )
 

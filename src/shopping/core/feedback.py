@@ -75,6 +75,10 @@ def snapshot(sel: Selection) -> dict:
         "quantity": sel.quantity,
         "agent_reasons": sel.reason_codes,
         "agent_rationale": sel.rationale,
+        "substitution": {"allowed": bool(sel.substitution_allowed), "note": sel.substitution_note,
+                         "substitute_product_id": sel.substitute_product_id},
+        "aisle": sel.product.aisle,
+        "category": sel.product.category_path,
     }
 
 

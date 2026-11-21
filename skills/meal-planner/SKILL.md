@@ -1,6 +1,6 @@
 ---
 name: "meal-planner"
-description: Build recipes from what Ryan has on hand, keep his Notion kitchen inventory current, find or save recipes in his Notion Cooking database, and plan shopping runs from his regular recipes. Parses grocery receipts into the inventory with estimated expiry dates. Use whenever Ryan asks what to cook, lists ingredients, mentions leftovers, meal prep, batch cooking, a recipe, or a substitution; asks to find or save a recipe or what his notes say about a technique, ingredient, or Gourmet Night; shares a receipt or says he bought, used up, ran out of, threw out, froze, moved, or cooked something; mentions the pantry, fridge, expiry dates, or grocery list; or asks to plan the week, shop for the regulars, build a shopping list, promote or drop a regular recipe, or stage meals in the Kitchen artifact, even if he never says "recipe" or "pantry".
+description: Build recipes from what Ryan has on hand, keep his Notion kitchen inventory current, find or save recipes in his Notion Cooking database, and plan shopping runs from his regular recipes. Parses grocery receipts into the inventory with estimated expiry dates. Use whenever Ryan asks what to cook, lists ingredients, mentions leftovers, meal prep, batch cooking, a recipe, or a substitution; asks to find or save a recipe or what his notes say about a technique, ingredient, or Gourmet Night; shares a receipt or says he bought, used up, ran out of, threw out, froze, moved, or cooked something; mentions the pantry, fridge, expiry dates, or grocery list; or asks to plan the week, plan meals around what's on sale, shop for the regulars, build a shopping list, promote or drop a regular recipe, or stage meals in the Kitchen artifact, even if he never says "recipe" or "pantry".
 ---
 
 # Meal planner
@@ -290,6 +290,42 @@ Cilantro | 1 bunch | optional
 ### Reading regulars
 
 Query Cooking in rows mode with `Regular Recipe?` checked (`propertyType: checkbox`, `checkbox_is`, `true`), which returns each row's `Shopping Ingredients`. Fetch a page only when that field is empty, then build and write the manifest. Do this once per conversation; re-read only after a promotion or demotion. For a recipe request, read them once so the "You also have everything for…" line can be checked against their manifests; skip that line if the read fails.
+
+### Deal-led planning
+
+When the shopping-assistant MCP is connected (`shopping_*` tools), plan around what is on sale at No Frills
+this week. Call `shopping_get_context` with `focus: "meals"` once per conversation. It returns:
+- `meal_deals` grouped as Protein, Produce, Dairy & eggs, Pantry, Frozen, Bakery, Deli: each deal with
+  price, % off, unit price, when the sale ends, and `is_lowest_seen` where there's history;
+- `your_items_on_sale`: things the household already buys;
+- `recent_review_notes`: Ryan's recent words about products.
+
+Use it at two points:
+
+- **Choosing recipes** (step 1 below, when Ryan names none, and for "what should we eat this week?"):
+  - Prefer regulars and staged dishes whose *defining* ingredients are on sale: the protein first, then the
+    main produce.
+  - Fill gaps with a new dish built around the best protein deal (e.g. pork picnic at $6.61/kg → carnitas
+    as a bulk recipe).
+  - Propose about **5 meals** by default (two bulk plus three dinners, per Demand below). Give each a line:
+    `Meal — the deal it uses (price, % off, ends date)`.
+  - A deal on something Ryan has turned down (it won't appear) or marked `Avoid:` never drives a meal.
+  - Never pick a dish only because one minor ingredient is cheap.
+- **Consolidating** (step 4): when two formats would both work, prefer the one on sale, and say so in
+  "Swaps".
+
+Sale end dates matter for perishables. Plan the meals using fresh deals for the first half of the week,
+and choose freezable proteins (state "freeze on arrival") for anything later.
+
+**Proactive mode.** When this runs on a schedule or Ryan says "do the usual" (new flyer weeks start
+Thursday):
+1. Call `shopping_get_context` (refresh with `shopping_refresh_deals` if the scan is older than ~2 days).
+2. Propose the meals.
+3. Hand the ingredient list to grocery-shopping, which stages a shopping run for review.
+4. Report the meals and the run's review link.
+
+Nothing is bought, and nothing goes into the cart until Ryan approves it in the app. In proactive mode,
+don't write Groceries rows until Ryan says go; the run itself is the proposal.
 
 ### Planning a shopping run
 

@@ -5,7 +5,7 @@ from pathlib import Path
 
 # Settings are read at import time; point them at a throwaway data dir before importing the app.
 _TMP = tempfile.mkdtemp(prefix="shopping-tests-")
-os.environ.update({"DATA_DIR": _TMP, "PCX_API_KEY": "test-key", "SHOPPING_ENV_FILE": "/nonexistent", "STORE_ID": "3728"})
+os.environ.update({"DATA_DIR": _TMP, "PCX_API_KEY": "test-key", "SHOPPING_ENV_FILE": "/nonexistent", "STORE_ID": "3728", "DEAL_SCAN_HOURS": "0"})
 
 import pytest  # noqa: E402
 from sqlalchemy import create_engine  # noqa: E402

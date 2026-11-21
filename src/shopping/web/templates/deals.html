@@ -4,6 +4,12 @@
 <h1>Top deals</h1>
 <p class="muted small">Standout prices worth knowing about, flagged by the agent while shopping. Add one straight to the cart, or dismiss
 it with a reason so future picks get better. Deals drop off when the sale ends.</p>
+<form method="post" action="/deals/scan" class="small muted scan-line">
+  {% if scanning %}Scanning every aisle for deals now…
+  {% elif scan %}Store-wide deal data: {{ on_sale }} items on sale, scanned {{ scan.finished_at | local }}.
+  {% else %}No store-wide deal scan yet.{% endif %}
+  {% if not scanning %}<button class="link">Rescan now</button>{% endif %}
+</form>
 
 {% if active %}
   {% for d in active %}
@@ -45,10 +51,7 @@ it with a reason so future picks get better. Deals drop off when the sale ends.<
     <details class="why">
       <summary>Not for me…</summary>
       <form method="post" action="/deals/{{ d.deal_id }}/dismiss">
-        <div class="chip-group">
-          {% for code, label in FEEDBACK_TAGS.deal_dismissed.items() %}<label class="chip"><input type="checkbox" name="tags" value="{{ code }}"><span>{{ label }}</span></label>{% endfor %}
-        </div>
-        <div class="subs-row"><input type="text" name="note" placeholder="Optional note for the agent, e.g. 'only buy this brand at Costco'"><button>Dismiss</button></div>
+        <div class="subs-row"><input type="text" name="note" placeholder="Why not? (optional) e.g. “have plenty”, “we get this at Costco”, “not a deal”"><button>Dismiss</button></div>
       </form>
     </details>
   </div>

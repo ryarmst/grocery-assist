@@ -114,6 +114,21 @@ class Product(Base):
     link: Mapped[str | None] = mapped_column(String(512))
     first_seen_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow)
     last_seen_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow)
+    # Where it sits in the store (No Frills' own aisle tree): leaf category, full path, and the aisle
+    # (second level under Food, e.g. "Meat"; first level elsewhere, e.g. "Household Supplies").
+    category_code: Mapped[str | None] = mapped_column(String(16), index=True)
+    category_path: Mapped[str | None] = mapped_column(String(256))
+    aisle: Mapped[str | None] = mapped_column(String(64), index=True)
+    # Latest known shelf price and deal (denormalized from the newest observation) for fast catalogue queries.
+    current_price: Mapped[Decimal | None] = mapped_column(DecimalText)
+    current_regular_price: Mapped[Decimal | None] = mapped_column(DecimalText)
+    current_unit_price: Mapped[Decimal | None] = mapped_column(DecimalText)
+    current_unit_basis: Mapped[str | None] = mapped_column(String(16))
+    current_deal_text: Mapped[str | None] = mapped_column(String(128))
+    current_deal_expiry: Mapped[str | None] = mapped_column(String(10))  # YYYY-MM-DD, last day of the sale
+    current_on_sale: Mapped[bool] = mapped_column(Boolean, default=False, index=True)
+    current_availability: Mapped[str | None] = mapped_column(String(64))
+    current_observed_at: Mapped[datetime | None] = mapped_column(UTCDateTime, index=True)
 
     observations: Mapped[list[PriceObservation]] = relationship(back_populates="product", order_by="PriceObservation.observed_at")
 
@@ -387,3 +402,29 @@ class TopDeal(Base):
 
     product: Mapped[Product] = relationship()
     observation: Mapped[PriceObservation | None] = relationship()
+
+
+class Category(Base):
+    """No Frills' aisle tree, learned from search facets and product breadcrumbs."""
+
+    __tablename__ = "categories"
+
+    code: Mapped[str] = mapped_column(String(16), primary_key=True)
+    name: Mapped[str] = mapped_column(String(128))
+    parent_code: Mapped[str | None] = mapped_column(String(16), index=True)
+    level: Mapped[int] = mapped_column(Integer, default=1)  # 1 = department (Food), 2 = aisle (Meat), 3 = sub-aisle (Beef)
+    path: Mapped[str] = mapped_column(String(256))
+
+
+class DealScan(Base):
+    """One sweep of current deals, aisle by aisle."""
+
+    __tablename__ = "deal_scans"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    started_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow, index=True)
+    finished_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
+    status: Mapped[str] = mapped_column(String(16), default="running")  # running | done | failed
+    pages: Mapped[int] = mapped_column(Integer, default=0)
+    products_seen: Mapped[int] = mapped_column(Integer, default=0)
+    error: Mapped[str | None] = mapped_column(Text)

@@ -25,6 +25,7 @@ from shopping.models import (
     SEL_APPROVED,
     SEL_FAILED,
     SEL_PENDING,
+    Category,
     SEL_REJECTED,
     CartAction,
     ChoiceGroup,
@@ -78,9 +79,72 @@ def upsert_product(session: Session, np: NormalizedProduct) -> Product:
             setattr(product, attr, value)
     if np.gtin:
         product.gtin = np.gtin
+    if np.categories:
+        set_category(session, product, np.categories)
     product.last_seen_at = utcnow()
     session.flush()
     return product
+
+
+def aisle_of(path: list[tuple[str, str]]) -> str | None:
+    """The shopper's "aisle": second level under Food (Meat, Dairy & Eggs…), first level elsewhere."""
+    if not path:
+        return None
+    if path[0][1] == "Food" and len(path) > 1:
+        return path[1][1]
+    return path[0][1]
+
+
+def remember_categories(session: Session, path: list[tuple[str, str]]) -> None:
+    """Store each level of an aisle path (root first) in the category tree."""
+    parent = None
+    names: list[str] = []
+    for level, (code, name) in enumerate(path, start=1):
+        names.append(name)
+        cat = session.get(Category, code)
+        if cat is None:
+            cat = Category(code=code, name=name)
+            session.add(cat)
+        cat.name, cat.parent_code, cat.level, cat.path = name, parent, level, " > ".join(names)
+        parent = code
+
+
+CROSS_CUTTING_AISLES = {"Natural and Organic", "International Foods"}  # also list products that live in a real aisle
+
+
+def set_category(session: Session, product: Product, path: list[tuple[str, str]], *, authoritative: bool = True) -> None:
+    """Give a product its category. The product page's breadcrumb is authoritative; a deal scan (which sees a
+    product under every aisle it's listed in) only fills in a missing or cross-cutting category."""
+    if not path:
+        return
+    remember_categories(session, path)
+    if not authoritative and product.category_code and product.aisle not in CROSS_CUTTING_AISLES:
+        return
+    if not authoritative and product.category_code and aisle_of(path) in CROSS_CUTTING_AISLES:
+        return
+    product.category_code = path[-1][0]
+    product.category_path = " > ".join(n for _, n in path)
+    product.aisle = aisle_of(path)
+
+
+def _is_on_sale(obs: PriceObservation) -> bool:
+    return bool(obs.deal_text or obs.pc_optimum_text or (obs.sale_price is not None and obs.regular_price is not None
+                                                        and obs.sale_price < obs.regular_price))
+
+
+def _set_current(product: Product, obs: PriceObservation) -> None:
+    """Keep the product's current_* fields in step with its newest shelf observation."""
+    if obs.source == "order":
+        return  # a price paid in the past, not today's shelf price
+    if product.current_observed_at and obs.observed_at and obs.observed_at < product.current_observed_at:
+        return
+    product.current_price, product.current_regular_price = obs.effective_price, obs.regular_price
+    product.current_unit_price, product.current_unit_basis = obs.unit_price, obs.unit_price_basis
+    product.current_deal_text = obs.deal_text or obs.pc_optimum_text
+    product.current_deal_expiry = (obs.deal_expiry or "")[:10] or None
+    product.current_on_sale = _is_on_sale(obs)
+    product.current_availability = obs.availability
+    product.current_observed_at = obs.observed_at or utcnow()
 
 
 def record_observation(session: Session, np: NormalizedProduct, *, source: str, store_id: str | None,
@@ -102,6 +166,10 @@ def record_observation(session: Session, np: NormalizedProduct, *, source: str, 
             and last.normalized_quantity == np.size_value
             and last.deal_text == np.deal_text
         ):
+            _set_current(product, last)
+            if source != "order":
+                product.current_observed_at = utcnow()  # same price, confirmed again now
+                product.current_availability = np.availability
             return last
     obs = PriceObservation(
         product_id=product.id,
@@ -129,6 +197,7 @@ def record_observation(session: Session, np: NormalizedProduct, *, source: str, 
     )
     session.add(obs)
     session.flush()
+    _set_current(product, obs)
     return obs
 
 

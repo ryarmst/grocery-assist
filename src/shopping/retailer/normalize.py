@@ -145,6 +145,7 @@ class NormalizedProduct:
     quantity_interval: float | None = None
     image_url: str | None = None
     link: str | None = None
+    categories: list = field(default_factory=list)  # [(code, name), ...] root first, e.g. Food > Meat > Beef
     raw: dict = field(default_factory=dict, repr=False)
 
     @property
@@ -187,6 +188,7 @@ class NormalizedProduct:
             "availability": self.availability,
             "sponsored": self.sponsored or None,
             "max_quantity": self.max_quantity,
+            "category": " > ".join(n for _, n in self.categories) or None,
         }
 
     def to_record(self) -> dict:
@@ -317,6 +319,8 @@ def from_product_detail(prod: dict) -> NormalizedProduct:
         quantity_interval=units.get("interval"),
         image_url=(images[0].get("smallUrl") or images[0].get("imageUrl")) if images else None,
         link=prod.get("link"),
+        categories=[(str(b["categoryCode"]), b.get("name") or "") for b in (prod.get("breadcrumbs") or [])
+                    if isinstance(b, dict) and b.get("categoryCode")],
         raw=prod,
     )
     if special and was is not None and price is not None and was > price:
